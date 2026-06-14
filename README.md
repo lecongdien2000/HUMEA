@@ -39,7 +39,7 @@ HUMEA models multi-modal entity alignment with three core ideas:
 
 ## Dataset
 1. Download the processed MMKB datasets and image/text embeddings:
-   - **data.zip** (BaiduYun): https://pan.baidu.com/s/1BcPAdaP6nhMPYOGzEKmsIQ (code: `aaai`).
+   - **data.zip**: https://drive.google.com/file/d/1a3aou1qe7Yzq6y_khyTq1La_kf3UI7sC/view?usp=drive_link.
 2. Extract the archive and place the contents under `data/` so that paths look like:
    - `data/mmkb-datasets/FB15K_DB15K/...`
    - `data/mmkb-datasets/FB15K_YAGO15K/...`
