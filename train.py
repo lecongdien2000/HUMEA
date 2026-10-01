@@ -12,7 +12,7 @@ from loguru import logger
 
 from layers import MultiLossLayer
 from loss import ial_loss, icl_loss
-from memory_utils import checkpoint_call, checkpoint_loss, saved_tensor_offload
+from memory_utils import checkpoint_call, checkpoint_loss
 from model import MIEstimator, MultiModalEncoder, list_rebul_sort
 from utils import (
     csls_sim,
@@ -410,8 +410,6 @@ class HUMEA:
             self.mi_estimator.eval()
             self.optimizer.zero_grad()
 
-            saved_tensors = saved_tensor_offload()
-            saved_tensors.__enter__()
             (
                 [
                     gph_emb,
@@ -491,7 +489,6 @@ class HUMEA:
 
             torch.cuda.empty_cache()
             sum(loss_all).backward()
-            saved_tensors.__exit__(None, None, None)
             self.optimizer.step()
 
             # train estimator
