@@ -1,6 +1,6 @@
 # HUMEA experiment reproduction
 
-Code and execution instructions for the group's HUMEA reproduction, based on [upstream HUMEA](https://github.com/mikumifa/HUMEA). Method explanations, results and comparisons belong in the accompanying report.
+Code and execution instructions for the group's [HUMEA reproduction repository](https://github.com/lecongdien2000/HUMEA-reproduction), based on [upstream HUMEA](https://github.com/mikumifa/HUMEA). Method explanations, results and comparisons belong in the accompanying report.
 
 ## Environment and hardware
 
