@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import argparse
 import csv
+import importlib
 import json
 import os
 import re
@@ -114,7 +116,7 @@ def assign_gpu_queues(
 
     if not gpu_ids:
         return {}
-    if len(gpu_ids) == 1:
+    if len(gpu_ids) == 1 or len(experiment_ids) == 1:
         return {gpu_ids[0]: list(experiment_ids)}
     db15k = [item for item in experiment_ids if EXPERIMENTS[item].dataset == "FB15K_DB15K"]
     yago15k = [item for item in experiment_ids if EXPERIMENTS[item].dataset == "FB15K_YAGO15K"]
@@ -356,6 +358,144 @@ def execute_queues(
 
     write_summary_csv(artifacts_dir / "summary.csv", manifest)
     return bool(outcomes) and all(outcomes)
+
+
+def validate_runtime_dependencies() -> list[str]:
+    """Return import failures for packages used by the released training code."""
+
+    failures: list[str] = []
+    for module_name in ("torch", "numpy", "scipy", "sklearn", "loguru"):
+        try:
+            importlib.import_module(module_name)
+        except Exception as exc:
+            failures.append(f"{module_name}: {type(exc).__name__}: {exc}")
+    return failures
+
+
+def discover_gpu_ids() -> list[str]:
+    """Return CUDA device indices visible to this runner process."""
+
+    try:
+        torch = importlib.import_module("torch")
+        return [str(index) for index in range(torch.cuda.device_count())]
+    except Exception:
+        return []
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Create the command-line interface without importing heavy dependencies."""
+
+    parser = argparse.ArgumentParser(
+        description="Validate and run the six main HUMEA reproduction experiments."
+    )
+    parser.add_argument(
+        "--repo-root",
+        type=Path,
+        default=Path(__file__).resolve().parent,
+        help="HUMEA repository root (default: directory containing this script)",
+    )
+    parser.add_argument(
+        "--artifacts-dir",
+        type=Path,
+        default=Path("artifacts"),
+        help="Artifact directory, relative to the repository by default",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Rerun experiments that already have successful metrics",
+    )
+    parser.add_argument(
+        "--allow-cpu",
+        action="store_true",
+        help="Allow training without CUDA (intended only for runner testing)",
+    )
+
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers.add_parser("validate", help="Validate dependencies, data, and CUDA")
+    subparsers.add_parser("smoke", help="Run db15k-20 for 12 epochs")
+    single = subparsers.add_parser("single", help="Run one full experiment")
+    single.add_argument(
+        "--experiment",
+        required=True,
+        choices=list(EXPERIMENTS),
+        help="Main-table experiment ID",
+    )
+    subparsers.add_parser("all", help="Run all six main-table experiments")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI entry point. Return a process-style exit code."""
+
+    args = build_parser().parse_args(argv)
+    repo_root = args.repo_root.resolve()
+    artifacts_dir = args.artifacts_dir
+    if not artifacts_dir.is_absolute():
+        artifacts_dir = repo_root / artifacts_dir
+
+    if args.command == "single":
+        experiment_ids = [args.experiment]
+    elif args.command == "smoke":
+        experiment_ids = ["db15k-20"]
+    else:
+        experiment_ids = list(EXPERIMENTS)
+    selected = [EXPERIMENTS[experiment_id] for experiment_id in experiment_ids]
+
+    dependency_failures = validate_runtime_dependencies()
+    if dependency_failures:
+        print("Missing or broken runtime dependencies:", file=sys.stderr)
+        for failure in dependency_failures:
+            print(f"  - {failure}", file=sys.stderr)
+        return 2
+
+    missing_files = find_missing_files(repo_root, selected)
+    if missing_files:
+        print("Missing required dataset files:", file=sys.stderr)
+        for path in missing_files:
+            print(f"  - {path.as_posix()}", file=sys.stderr)
+        return 2
+
+    gpu_ids = discover_gpu_ids()
+    print(f"Data validation passed for {len(selected)} experiment(s).")
+    print(f"Visible CUDA devices: {len(gpu_ids)}")
+    if args.command == "validate":
+        return 0
+
+    if not gpu_ids and not args.allow_cpu:
+        print(
+            "No CUDA GPU is visible. Enable a Kaggle GPU accelerator or use "
+            "--allow-cpu only for runner testing.",
+            file=sys.stderr,
+        )
+        return 2
+
+    queues = (
+        assign_gpu_queues(experiment_ids, gpu_ids)
+        if gpu_ids
+        else {"cpu": experiment_ids}
+    )
+    manifest_path = artifacts_dir / "manifest.json"
+    try:
+        manifest = load_manifest(manifest_path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(f"Cannot load manifest {manifest_path}: {exc}", file=sys.stderr)
+        return 2
+
+    success = execute_queues(
+        repo_root=repo_root,
+        artifacts_dir=artifacts_dir,
+        queues=queues,
+        manifest=manifest,
+        force=args.force,
+        epochs=12 if args.command == "smoke" else 1000,
+        checkpoint=10,
+    )
+    return 0 if success else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
 
 
 def build_train_command(

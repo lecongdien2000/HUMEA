@@ -3,6 +3,7 @@ import threading
 from pathlib import Path
 
 import kaggle_runner
+import pytest
 from kaggle_runner import (
     EXPERIMENTS,
     assign_gpu_queues,
@@ -10,6 +11,7 @@ from kaggle_runner import (
     execute_queues,
     find_missing_files,
     load_manifest,
+    main,
     parse_best_metrics,
     required_dataset_files,
     run_experiment,
@@ -240,3 +242,85 @@ def test_failed_experiment_stops_only_its_gpu_queue(tmp_path, monkeypatch):
         ("1", "yago15k-50"),
         ("1", "yago15k-80"),
     ]
+
+
+def make_complete_data(repo_root: Path, experiment_ids: list[str]) -> None:
+    for experiment_id in experiment_ids:
+        experiment = EXPERIMENTS[experiment_id]
+        dataset_dir = repo_root / "data" / "mmkb-datasets" / experiment.dataset
+        dataset_dir.mkdir(parents=True, exist_ok=True)
+        for relative_path in required_dataset_files(experiment.dataset):
+            (dataset_dir / relative_path).touch(exist_ok=True)
+
+
+def test_cli_validate_checks_all_released_inputs(tmp_path, monkeypatch, capsys):
+    make_complete_data(tmp_path, list(EXPERIMENTS))
+    monkeypatch.setattr(kaggle_runner, "validate_runtime_dependencies", lambda: [])
+    monkeypatch.setattr(kaggle_runner, "discover_gpu_ids", lambda: ["0", "1"])
+
+    exit_code = main(["--repo-root", str(tmp_path), "validate"])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "Data validation passed for 6 experiment(s)" in output
+    assert "Visible CUDA devices: 2" in output
+
+
+def test_cli_rejects_unknown_single_experiment(tmp_path):
+    with pytest.raises(SystemExit):
+        main(
+            [
+                "--repo-root",
+                str(tmp_path),
+                "single",
+                "--experiment",
+                "not-an-experiment",
+            ]
+        )
+
+
+def test_cli_rejects_full_training_without_gpu(tmp_path, monkeypatch, capsys):
+    make_complete_data(tmp_path, ["db15k-20"])
+    monkeypatch.setattr(kaggle_runner, "validate_runtime_dependencies", lambda: [])
+    monkeypatch.setattr(kaggle_runner, "discover_gpu_ids", lambda: [])
+
+    exit_code = main(
+        [
+            "--repo-root",
+            str(tmp_path),
+            "single",
+            "--experiment",
+            "db15k-20",
+        ]
+    )
+
+    assert exit_code == 2
+    assert "No CUDA GPU is visible" in capsys.readouterr().err
+
+
+def test_cli_allow_cpu_invokes_single_experiment(tmp_path, monkeypatch):
+    make_complete_data(tmp_path, ["db15k-20"])
+    monkeypatch.setattr(kaggle_runner, "validate_runtime_dependencies", lambda: [])
+    monkeypatch.setattr(kaggle_runner, "discover_gpu_ids", lambda: [])
+    captured = {}
+
+    def fake_execute_queues(**kwargs):
+        captured.update(kwargs)
+        return True
+
+    monkeypatch.setattr(kaggle_runner, "execute_queues", fake_execute_queues)
+
+    exit_code = main(
+        [
+            "--repo-root",
+            str(tmp_path),
+            "--allow-cpu",
+            "single",
+            "--experiment",
+            "db15k-20",
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["queues"] == {"cpu": ["db15k-20"]}
+    assert captured["epochs"] == 1000
