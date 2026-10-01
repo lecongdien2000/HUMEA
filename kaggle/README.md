@@ -55,7 +55,7 @@ The configuration cell contains:
 ```python
 MODE = "single"       # validate | smoke | single | all
 EXPERIMENT = "db15k-20"
-BATCH_SIZE = 64           # Paper: 512; 15 GiB Kaggle T4 compatibility
+BATCH_SIZE = 512          # Paper setting; checkpointed for Kaggle T4
 DOWNLOAD_DATA_IF_MISSING = True
 ```
 
@@ -82,8 +82,8 @@ The notebook calls the following commands from `/kaggle/working/HUMEA`. They can
 ```bash
 python kaggle_runner.py validate
 python kaggle_runner.py smoke
-python kaggle_runner.py --batch-size 64 single --experiment db15k-20
-python kaggle_runner.py --batch-size 64 all
+python kaggle_runner.py --batch-size 512 single --experiment db15k-20
+python kaggle_runner.py --batch-size 512 all
 ```
 
 Use direct Python execution on Kaggle. Do not run `uv sync`: Kaggle already supplies the CUDA-enabled PyTorch stack, and recreating the lockfile environment downloads an unnecessary CUDA stack.
@@ -119,13 +119,13 @@ The paper target for `db15k-20` is:
 
 `summary.csv` records the batch size and labels a result `close` when all four metrics are within 0.01 absolute of their paper targets. This label is diagnostic, not a replacement for reporting the actual values.
 
-The upstream losses originally normalized every entity embedding before selecting each mini-batch; live T4 tests showed that this retained redundant full-table autograd graphs. The included `loss.py` compatibility patch selects the batch rows before applying the same row-wise L2 normalization. These operations are mathematically equivalent and use less memory. The authors also retain every mini-batch loss graph until one final backward pass. The runner therefore applies PyTorch non-reentrant gradient checkpointing to both the loss calls and main multimodal-encoder forward. This preserves values and gradients at the cost of recomputation. The Kaggle notebook initially uses batch size 64 for T4 validation. Report the implementation-level memory patches and batch-size deviation; the loss formula, model architecture, seed, features, learning rate, and 1,000-epoch schedule are unchanged.
+The upstream losses originally normalized every entity embedding before selecting each mini-batch; live T4 tests showed that this retained redundant full-table autograd graphs. The included `loss.py` compatibility patch selects the batch rows before applying the same row-wise L2 normalization. These operations are mathematically equivalent and use less memory. The authors also retain every mini-batch loss graph until one final backward pass. The runner therefore applies PyTorch non-reentrant gradient checkpointing to both the loss calls and main multimodal-encoder forward. This preserves values and gradients at the cost of recomputation. Because checkpointing avoids retaining the quadratic loss intermediates, the notebook uses the paper batch size 512; it also creates fewer checkpoint records than the smaller diagnostic batches. Report the implementation-level memory patches; the loss formula, model architecture, seed, features, learning rate, batch size, and 1,000-epoch schedule are unchanged.
 
 ## Troubleshooting
 
 - **`kaggle_runner.py` not found:** attach the private Dataset created from `HUMEA-kaggle-bundle.zip`.
 - **Missing dataset files:** inspect the validation list and confirm `data.zip` contains both `mmkb-datasets` directories at the expected nesting level.
 - **No CUDA GPU is visible:** enable a GPU accelerator and restart the session. `--allow-cpu` exists for runner tests, not practical reproduction.
-- **CUDA out of memory:** confirm the batch-before-normalization and gradient-checkpoint patches are present. If a smaller GPU still fails, reduce `BATCH_SIZE` from 64 to 32 and document the deviation. Running one experiment at a time does not increase per-GPU memory because every HUMEA process already uses only one T4.
+- **CUDA out of memory:** confirm the batch-before-normalization and gradient-checkpoint patches are present. If a smaller GPU still fails, use a GPU with more memory; reducing the batch after checkpointing can increase checkpoint-record overhead because this implementation accumulates all batch losses before backward.
 - **A process exits without metrics:** open `artifacts/logs/<experiment-id>.log`. The manifest records the exit code and does not mark the run successful.
 - **Session interruption:** restore the previous `artifacts/` directory before rerunning. Completed experiments are skipped; the interrupted one starts over.

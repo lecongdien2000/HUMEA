@@ -88,7 +88,7 @@ def test_kaggle_notebook_defaults_to_tested_t4_batch_size():
     )
     source = "".join(notebook["cells"][1]["source"])
 
-    assert "BATCH_SIZE = 64" in source
+    assert "BATCH_SIZE = 512" in source
 
 
 def test_validation_accepts_complete_released_dataset(tmp_path: Path):
