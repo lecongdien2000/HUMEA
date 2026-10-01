@@ -10,7 +10,7 @@ def test_combine_expert_outputs_matches_materialized_reference_and_gradients():
     reference_gates = gates.detach().clone().requires_grad_(True)
     reference_experts = experts.detach().clone().requires_grad_(True)
 
-    actual = combine_expert_outputs(gates, experts)
+    actual = combine_expert_outputs(gates, list(experts.unbind(dim=1)))
     expected = (reference_gates.unsqueeze(-1) * reference_experts).sum(dim=-2)
 
     torch.testing.assert_close(actual, expected)

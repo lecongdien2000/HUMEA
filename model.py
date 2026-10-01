@@ -147,27 +147,27 @@ class MIEstimator(nn.Module):
         )
 
     def forward(self, embeddings: dict):
-        bsz, n_exp, _ = embeddings["img"].size()
+        n_exp = len(embeddings["img"])
         assert n_exp == self.num
         mi_losses = []
         for key in embeddings.keys():
             idx1, idx2 = random.sample(range(n_exp), 2)
-            z1 = embeddings[key][:, idx1, :]
-            z2 = embeddings[key][:, idx2, :]
+            z1 = embeddings[key][idx1]
+            z2 = embeddings[key][idx2]
             mi_losses.append(checkpoint_call(self.estimators[key], z1, z2))
 
         return sum(mi_losses) / len(mi_losses)
 
     def train_estimator(self, embeddings: dict):
-        bsz, n_exp, _ = embeddings["img"].size()
+        n_exp = len(embeddings["img"])
         assert n_exp == self.num
 
         est_losses = []
 
         for key in embeddings.keys():
             idx1, idx2 = random.sample(range(n_exp), 2)
-            z1 = embeddings[key][:, idx1, :]
-            z2 = embeddings[key][:, idx2, :]
+            z1 = embeddings[key][idx1]
+            z2 = embeddings[key][idx2]
             est_losses.append(self.estimators[key].learning_loss(z1, z2))
 
         return sum(est_losses) / len(est_losses)

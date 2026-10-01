@@ -55,7 +55,7 @@ def test_mi_networks_are_checkpointed_after_expert_pair_selection():
     source = (Path(__file__).parents[1] / "model.py").read_text(encoding="utf-8")
 
     mi_forward = source.index("def forward(self, embeddings: dict):")
-    pair_selection = source.index("z2 = embeddings[key][:, idx2, :]", mi_forward)
+    pair_selection = source.index("z2 = embeddings[key][idx2]", mi_forward)
     checkpoint = source.index(
         "checkpoint_call(self.estimators[key], z1, z2)", pair_selection
     )
