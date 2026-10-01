@@ -13,6 +13,11 @@ from torch.nn.parameter import Parameter
 from torch.nn.modules.module import Module
 import torch.nn.functional as F
 
+
+def combine_expert_outputs(gates, expert_outputs):
+    """Weight and sum experts without materializing a second B x E x D tensor."""
+    return torch.bmm(gates.unsqueeze(1), expert_outputs).squeeze(1)
+
 # !!! 需要改为执行用的GPU号码 或者改成0
 
 
@@ -247,9 +252,8 @@ class MoEAdaptorLayer(nn.Module):
             self.experts[i](x).unsqueeze(-2) for i in range(self.n_exps)
         ]  # [(B, 1, D)]
         expert_outputs = torch.cat(expert_outputs, dim=-2)
-        multiple_outputs = gates.unsqueeze(-1) * expert_outputs
         return (
-            multiple_outputs.sum(dim=-2),
+            combine_expert_outputs(gates, expert_outputs),
             expert_outputs,
             gates,
         )
