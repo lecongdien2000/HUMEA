@@ -487,6 +487,7 @@ class HUMEA:
                 )
                 loss_all.append(loss_joi)
 
+            torch.cuda.empty_cache()
             sum(loss_all).backward()
             self.optimizer.step()
 

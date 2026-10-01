@@ -1,4 +1,5 @@
 import torch
+from pathlib import Path
 
 from memory_utils import checkpoint_call, checkpoint_loss
 
@@ -28,3 +29,12 @@ def test_checkpoint_call_supports_nested_outputs_and_keyword_arguments():
     (outputs[0].sum() + outputs[1].sum() + metadata["sum"]).backward()
 
     assert value.grad is not None
+
+
+def test_cuda_cache_is_released_immediately_before_backward():
+    source = (Path(__file__).parents[1] / "train.py").read_text(encoding="utf-8")
+    backward = source.index("sum(loss_all).backward()")
+    cache_release = source.rfind("torch.cuda.empty_cache()", 0, backward)
+
+    assert cache_release != -1
+    assert source[cache_release:backward].strip() == "torch.cuda.empty_cache()"
