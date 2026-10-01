@@ -2,3 +2,8 @@ data/*
 nohup.out
 checkpoints
 .worktrees/
+/artifacts/
+/.ipynb_checkpoints/
+/kaggle/.ipynb_checkpoints/
+__pycache__/
+.pytest_cache/

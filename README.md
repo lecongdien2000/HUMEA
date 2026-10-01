@@ -66,6 +66,10 @@ bash run.sh 42 FB15K_YAGO15K 0.2 0 0
 ```
 Arguments correspond to: `seed dataset alignment_rate fusion_weight_dim without_flag [train_ill_path]`.
 
+### Kaggle reproduction
+
+For a validated Kaggle workflow covering the six non-iterative main-result experiments, use [`kaggle/humea_kaggle.ipynb`](kaggle/humea_kaggle.ipynb) and follow [`kaggle/README.md`](kaggle/README.md). The workflow reuses the released precomputed modality features, runs `train.py` directly without `uv`, supports one or two GPUs, and exports logs plus a metrics summary.
+
 ### Reproducing Main Results
 Main configurations are scripted in `run_all.sh`. To reproduce core tables:
 ```bash
