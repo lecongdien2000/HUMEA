@@ -34,16 +34,16 @@ class icl_loss(nn.Module):
 
     def forward(self, emb, train_links, emb2=None, norm=True):
         # norm 等价于L2
-        if norm:
-            emb = F.normalize(emb, dim=1)
-            if emb2 is not None:
-                emb2 = F.normalize(emb2, dim=1)
-        # Get (normalized) hidden1 and hidden2.
         zis = emb[train_links[:, 0]]
         if emb2 is not None:
             zjs = emb2[train_links[:, 1]]
         else:
             zjs = emb[train_links[:, 1]]
+        # Row-wise normalization commutes with indexing. Selecting first avoids
+        # retaining a full-table autograd graph for every training mini-batch.
+        if norm:
+            zis = F.normalize(zis, dim=1)
+            zjs = F.normalize(zjs, dim=1)
 
         temperature = self.tau
         alpha = self.weight
@@ -125,15 +125,15 @@ class ial_loss(nn.Module):
         self.detach = detach
 
     def forward(self, src_emb, tar_emb, train_links, norm=True):
-        if norm:
-            src_emb = F.normalize(src_emb, dim=1)
-            tar_emb = F.normalize(tar_emb, dim=1)
-
-        # Get (normalized) hidden1 and hidden2.
         src_zis = src_emb[train_links[:, 0]]
         src_zjs = src_emb[train_links[:, 1]]
         tar_zis = tar_emb[train_links[:, 0]]
         tar_zjs = tar_emb[train_links[:, 1]]
+        if norm:
+            src_zis = F.normalize(src_zis, dim=1)
+            src_zjs = F.normalize(src_zjs, dim=1)
+            tar_zis = F.normalize(tar_zis, dim=1)
+            tar_zjs = F.normalize(tar_zjs, dim=1)
 
         temperature = self.tau
         alpha = self.weight
