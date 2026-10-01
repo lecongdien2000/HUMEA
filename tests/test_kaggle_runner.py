@@ -1,12 +1,20 @@
 import sys
+import threading
 from pathlib import Path
 
+import kaggle_runner
 from kaggle_runner import (
     EXPERIMENTS,
+    assign_gpu_queues,
     build_train_command,
+    execute_queues,
     find_missing_files,
+    load_manifest,
     parse_best_metrics,
     required_dataset_files,
+    run_experiment,
+    should_skip,
+    write_summary_csv,
 )
 
 
@@ -94,3 +102,141 @@ def test_parse_best_metrics_reads_real_log_shape():
 
 def test_parse_best_metrics_returns_none_when_training_did_not_finish():
     assert parse_best_metrics("epoch 10 checkpoint") is None
+
+
+def test_one_gpu_queue_preserves_table_order():
+    queues = assign_gpu_queues(list(EXPERIMENTS), ["0"])
+
+    assert queues == {"0": list(EXPERIMENTS)}
+
+
+def test_two_gpu_queues_split_datasets():
+    queues = assign_gpu_queues(list(EXPERIMENTS), ["0", "1"])
+
+    assert queues == {
+        "0": ["db15k-20", "db15k-50", "db15k-80"],
+        "1": ["yago15k-20", "yago15k-50", "yago15k-80"],
+    }
+
+
+def test_resume_skips_only_successful_run_with_metrics():
+    manifest = {
+        "version": 1,
+        "experiments": {
+            "success": {"status": "success", "metrics": {"mrr": 0.5}},
+            "failed": {"status": "failed", "metrics": None},
+            "incomplete": {"status": "running", "metrics": None},
+        },
+    }
+
+    assert should_skip(manifest, "success", force=False)
+    assert not should_skip(manifest, "success", force=True)
+    assert not should_skip(manifest, "failed", force=False)
+    assert not should_skip(manifest, "incomplete", force=False)
+    assert not should_skip(manifest, "unknown", force=False)
+
+
+class FakeProcess:
+    def __init__(self, lines: list[str], returncode: int = 0):
+        self.stdout = iter(lines)
+        self.returncode = returncode
+
+    def wait(self) -> int:
+        return self.returncode
+
+
+def test_run_experiment_records_log_manifest_and_metrics(tmp_path, monkeypatch):
+    best_line = (
+        "Best avg epoch <330>: acc@[1, 5, 10]="
+        "[0.51175 0.6997 0.7643], mr=46.123, mrr=0.598\n"
+    )
+    captured = {}
+
+    def fake_popen(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return FakeProcess(["training\n", best_line])
+
+    monkeypatch.setattr(kaggle_runner.subprocess, "Popen", fake_popen)
+    manifest = load_manifest(tmp_path / "artifacts" / "manifest.json")
+
+    success = run_experiment(
+        repo_root=tmp_path,
+        artifacts_dir=tmp_path / "artifacts",
+        experiment=EXPERIMENTS["db15k-20"],
+        gpu_id="1",
+        manifest=manifest,
+        manifest_lock=threading.Lock(),
+    )
+
+    assert success
+    assert captured["kwargs"]["cwd"] == tmp_path
+    assert captured["kwargs"]["env"]["CUDA_VISIBLE_DEVICES"] == "1"
+    log_text = (tmp_path / "artifacts" / "logs" / "db15k-20.log").read_text()
+    assert "training" in log_text
+    record = manifest["experiments"]["db15k-20"]
+    assert record["status"] == "success"
+    assert record["gpu"] == "1"
+    assert record["metrics"]["hits1"] == 0.51175
+    assert record["command"] == captured["command"]
+    assert record["duration_seconds"] >= 0
+    assert (tmp_path / "artifacts" / "manifest.json").is_file()
+
+
+def test_summary_marks_metrics_close_to_paper(tmp_path):
+    manifest = {
+        "version": 1,
+        "experiments": {
+            "db15k-20": {
+                "status": "success",
+                "gpu": "0",
+                "duration_seconds": 60.0,
+                "metrics": {
+                    "epoch": 330,
+                    "hits1": 0.51175,
+                    "hits5": 0.6997,
+                    "hits10": 0.7643,
+                    "mrr": 0.598,
+                },
+            }
+        },
+    }
+
+    summary_path = tmp_path / "summary.csv"
+    write_summary_csv(summary_path, manifest)
+
+    summary = summary_path.read_text()
+    assert "db15k-20,FB15K_DB15K,0.2,0,success,330" in summary
+    assert summary.rstrip().endswith(",close")
+
+
+def test_failed_experiment_stops_only_its_gpu_queue(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_run_experiment(**kwargs):
+        item = (kwargs["gpu_id"], kwargs["experiment"].id)
+        calls.append(item)
+        return kwargs["experiment"].id != "db15k-20"
+
+    monkeypatch.setattr(kaggle_runner, "run_experiment", fake_run_experiment)
+    queues = {
+        "0": ["db15k-20", "db15k-50", "db15k-80"],
+        "1": ["yago15k-20", "yago15k-50", "yago15k-80"],
+    }
+
+    success = execute_queues(
+        repo_root=tmp_path,
+        artifacts_dir=tmp_path / "artifacts",
+        queues=queues,
+        manifest={"version": 1, "experiments": {}},
+    )
+
+    assert not success
+    assert ("0", "db15k-20") in calls
+    assert ("0", "db15k-50") not in calls
+    assert ("0", "db15k-80") not in calls
+    assert [item for item in calls if item[0] == "1"] == [
+        ("1", "yago15k-20"),
+        ("1", "yago15k-50"),
+        ("1", "yago15k-80"),
+    ]

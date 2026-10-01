@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
-import sys
+import csv
+import json
+import os
 import re
+import subprocess
+import sys
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
+from threading import Lock
 from typing import Iterable
 
 
@@ -97,6 +105,257 @@ def parse_best_metrics(text: str) -> dict[str, int | float] | None:
         "hits10": accuracy[2],
         "mrr": float(match.group("mrr")),
     }
+
+
+def assign_gpu_queues(
+    experiment_ids: list[str], gpu_ids: list[str]
+) -> dict[str, list[str]]:
+    """Assign dataset families to GPUs while preserving experiment order."""
+
+    if not gpu_ids:
+        return {}
+    if len(gpu_ids) == 1:
+        return {gpu_ids[0]: list(experiment_ids)}
+    db15k = [item for item in experiment_ids if EXPERIMENTS[item].dataset == "FB15K_DB15K"]
+    yago15k = [item for item in experiment_ids if EXPERIMENTS[item].dataset == "FB15K_YAGO15K"]
+    queues: dict[str, list[str]] = {}
+    if db15k:
+        queues[gpu_ids[0]] = db15k
+    if yago15k:
+        queues[gpu_ids[1]] = yago15k
+    return queues
+
+
+def load_manifest(path: Path) -> dict:
+    """Load runner state, or return a new manifest when none exists."""
+
+    if not path.is_file():
+        return {"version": 1, "experiments": {}}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if data.get("version") != 1 or not isinstance(data.get("experiments"), dict):
+        raise ValueError(f"Unsupported or invalid manifest: {path}")
+    return data
+
+
+def save_manifest(path: Path, manifest: dict) -> None:
+    """Atomically persist runner state."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = path.with_name(f"{path.name}.tmp")
+    temporary_path.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    os.replace(temporary_path, path)
+
+
+def should_skip(manifest: dict, experiment_id: str, *, force: bool) -> bool:
+    """Return whether an experiment has a complete reusable result."""
+
+    if force:
+        return False
+    record = manifest.get("experiments", {}).get(experiment_id, {})
+    return record.get("status") == "success" and bool(record.get("metrics"))
+
+
+def run_experiment(
+    *,
+    repo_root: Path,
+    artifacts_dir: Path,
+    experiment: Experiment,
+    gpu_id: str,
+    manifest: dict,
+    manifest_lock: Lock,
+    force: bool = False,
+    epochs: int = 1000,
+    checkpoint: int = 10,
+) -> bool:
+    """Run one experiment, stream its log, and record an atomic result."""
+
+    manifest_path = artifacts_dir / "manifest.json"
+    with manifest_lock:
+        if should_skip(manifest, experiment.id, force=force):
+            print(f"[skip] {experiment.id}: completed result already exists")
+            return True
+
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    log_dir = artifacts_dir / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"{experiment.id}.log"
+    command = build_train_command(
+        repo_root,
+        experiment,
+        epochs=epochs,
+        checkpoint=checkpoint,
+    )
+    environment = os.environ.copy()
+    if gpu_id != "cpu":
+        environment["CUDA_VISIBLE_DEVICES"] = gpu_id
+
+    started_at = datetime.now(timezone.utc)
+    started_clock = time.monotonic()
+    running_record = {
+        "status": "running",
+        "gpu": gpu_id,
+        "command": command,
+        "started_at": started_at.isoformat(),
+        "metrics": None,
+    }
+    with manifest_lock:
+        manifest["experiments"][experiment.id] = running_record
+        save_manifest(manifest_path, manifest)
+
+    output_lines: list[str] = []
+    exit_code = -1
+    error: str | None = None
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=repo_root,
+            env=environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        if process.stdout is None:
+            raise RuntimeError("Training subprocess did not expose stdout")
+        with log_path.open("w", encoding="utf-8") as log_file:
+            for line in process.stdout:
+                print(f"[{experiment.id}] {line}", end="")
+                log_file.write(line)
+                output_lines.append(line)
+        exit_code = process.wait()
+    except Exception as exc:  # The manifest must preserve launch/runtime failures.
+        error = f"{type(exc).__name__}: {exc}"
+
+    duration = time.monotonic() - started_clock
+    metrics = parse_best_metrics("".join(output_lines))
+    success = exit_code == 0 and metrics is not None
+    final_record = {
+        **running_record,
+        "status": "success" if success else "failed",
+        "finished_at": datetime.now(timezone.utc).isoformat(),
+        "duration_seconds": round(duration, 3),
+        "exit_code": exit_code,
+        "metrics": metrics,
+        "log": str(log_path.relative_to(repo_root))
+        if log_path.is_relative_to(repo_root)
+        else str(log_path),
+    }
+    if error:
+        final_record["error"] = error
+    elif exit_code == 0 and metrics is None:
+        final_record["error"] = "Training exited successfully without final best metrics"
+
+    with manifest_lock:
+        manifest["experiments"][experiment.id] = final_record
+        save_manifest(manifest_path, manifest)
+    return success
+
+
+def _comparison(experiment: Experiment, metrics: dict | None) -> str:
+    if not metrics:
+        return ""
+    targets = {
+        "hits1": experiment.hits1,
+        "hits5": experiment.hits5,
+        "hits10": experiment.hits10,
+        "mrr": experiment.mrr,
+    }
+    return (
+        "close"
+        if all(abs(float(metrics[key]) - target) <= 0.01 for key, target in targets.items())
+        else "different"
+    )
+
+
+def write_summary_csv(path: Path, manifest: dict) -> None:
+    """Write stable tabular results for Kaggle display and download."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = [
+        "experiment",
+        "dataset",
+        "rate",
+        "gpu",
+        "status",
+        "epoch",
+        "hits1",
+        "hits5",
+        "hits10",
+        "mrr",
+        "duration_seconds",
+        "comparison",
+    ]
+    with path.open("w", encoding="utf-8", newline="") as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+        writer.writeheader()
+        records = manifest.get("experiments", {})
+        for experiment_id, experiment in EXPERIMENTS.items():
+            if experiment_id not in records:
+                continue
+            record = records[experiment_id]
+            metrics = record.get("metrics") or {}
+            writer.writerow(
+                {
+                    "experiment": experiment_id,
+                    "dataset": experiment.dataset,
+                    "rate": experiment.rate,
+                    "gpu": record.get("gpu", ""),
+                    "status": record.get("status", ""),
+                    "epoch": metrics.get("epoch", ""),
+                    "hits1": metrics.get("hits1", ""),
+                    "hits5": metrics.get("hits5", ""),
+                    "hits10": metrics.get("hits10", ""),
+                    "mrr": metrics.get("mrr", ""),
+                    "duration_seconds": record.get("duration_seconds", ""),
+                    "comparison": _comparison(experiment, metrics),
+                }
+            )
+
+
+def execute_queues(
+    *,
+    repo_root: Path,
+    artifacts_dir: Path,
+    queues: dict[str, list[str]],
+    manifest: dict,
+    force: bool = False,
+    epochs: int = 1000,
+    checkpoint: int = 10,
+) -> bool:
+    """Run one sequential experiment queue per GPU, concurrently."""
+
+    manifest_lock = Lock()
+
+    def run_queue(gpu_id: str, experiment_ids: list[str]) -> bool:
+        for experiment_id in experiment_ids:
+            if not run_experiment(
+                repo_root=repo_root,
+                artifacts_dir=artifacts_dir,
+                experiment=EXPERIMENTS[experiment_id],
+                gpu_id=gpu_id,
+                manifest=manifest,
+                manifest_lock=manifest_lock,
+                force=force,
+                epochs=epochs,
+                checkpoint=checkpoint,
+            ):
+                return False
+        return True
+
+    outcomes: list[bool] = []
+    with ThreadPoolExecutor(max_workers=max(1, len(queues))) as executor:
+        futures = [
+            executor.submit(run_queue, gpu_id, experiment_ids)
+            for gpu_id, experiment_ids in queues.items()
+        ]
+        for future in as_completed(futures):
+            outcomes.append(future.result())
+
+    write_summary_csv(artifacts_dir / "summary.csv", manifest)
+    return bool(outcomes) and all(outcomes)
 
 
 def build_train_command(
