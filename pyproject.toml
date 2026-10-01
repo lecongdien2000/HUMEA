@@ -1,7 +1,7 @@
 [project]
-name = "pcmea"
+name = "humea-reproduction"
 version = "0.1.0"
-description = "Add your description here"
+description = "HUMEA experiment reproduction and tracking"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -13,6 +13,7 @@ dependencies = [
     "seaborn>=0.13.2",
     "sentencepiece>=0.2.0",
     "torch>=2.7.0",
+    "wandb==0.30.0",
     "tqdm>=4.67.1",
     "transformers>=4.52.4",
 ]

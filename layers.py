@@ -224,7 +224,9 @@ class PWLayer(nn.Module):
             module.weight.data.normal_(mean=0.0, std=0.02)
 
     def forward(self, x):
-        return self.lin(self.dropout(x) - self.bias)
+        # W(x - b) = Wx - Wb. Center in the projected dimension so each
+        # expert does not retain a full-width entity table for backward.
+        return self.lin(self.dropout(x)) - self.lin(self.bias)
 
 
 class MoEAdaptorLayer(nn.Module):

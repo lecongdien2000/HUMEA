@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -152,13 +153,33 @@ def save_manifest(path: Path, manifest: dict) -> None:
     os.replace(temporary_path, path)
 
 
-def should_skip(manifest: dict, experiment_id: str, *, force: bool) -> bool:
+def _tracking_matches(tracking, mode, project=None, entity=None):
+    if not isinstance(tracking, dict) or tracking.get("status") != "completed":
+        return False
+    if tracking.get("mode") not in {"online", "offline"}:
+        return False
+    if mode == "online":
+        return (
+            tracking.get("mode") == "online"
+            and bool(tracking.get("run_url"))
+            and (project is None or tracking.get("project") == project)
+            and (entity is None or tracking.get("entity") == entity)
+        )
+    return True
+
+
+def should_skip(manifest: dict, experiment_id: str, *, force: bool,
+                wandb_mode: str | None = None, wandb_project: str | None = None,
+                wandb_entity: str | None = None) -> bool:
     """Return whether an experiment has a complete reusable result."""
 
     if force:
         return False
     record = manifest.get("experiments", {}).get(experiment_id, {})
-    return record.get("status") == "success" and bool(record.get("metrics"))
+    completed = record.get("status") == "success" and bool(record.get("metrics"))
+    if not completed or wandb_mode in {None, "disabled"}:
+        return completed
+    return _tracking_matches(record.get("tracking"), wandb_mode, wandb_project, wandb_entity)
 
 
 def build_train_command(
@@ -224,13 +245,17 @@ def run_experiment(
     epochs: int = 1000,
     checkpoint: int = 10,
     batch_size: int = 512,
+    wandb_mode: str = "offline",
+    wandb_project: str = "humea-reproduction",
+    wandb_entity: str | None = None,
 ) -> bool:
     """Run one experiment, stream its log, and record an atomic result."""
 
     record_id = run_id or experiment.id
     manifest_path = artifacts_dir / "manifest.json"
     with manifest_lock:
-        if should_skip(manifest, record_id, force=force):
+        if should_skip(manifest, record_id, force=force, wandb_mode=wandb_mode,
+                       wandb_project=wandb_project, wandb_entity=wandb_entity):
             print(f"[skip] {record_id}: completed result already exists")
             return True
 
@@ -248,6 +273,17 @@ def run_experiment(
     if gpu_id == "cpu":
         command.extend(["--device", "cpu"])
     environment = os.environ.copy()
+    tracking_dir = artifacts_dir / "tracking" / f"{record_id}-{uuid.uuid4().hex[:8]}"
+    tracking_dir.mkdir(parents=True, exist_ok=True)
+    environment["WANDB_MODE"] = wandb_mode
+    environment["WANDB_PROJECT"] = wandb_project
+    if wandb_entity:
+        environment["WANDB_ENTITY"] = wandb_entity
+    environment["HUMEA_TRACKING_DIR"] = str(tracking_dir.resolve())
+    environment["HUMEA_EXPERIMENT_ID"] = experiment.id
+    environment["HUMEA_JOB_TYPE"] = "smoke" if record_id.startswith("smoke-") else "main"
+    environment["WANDB_NAME"] = f"{record_id}-seed42"
+    environment["PYTHONUNBUFFERED"] = "1"
     if gpu_id != "cpu":
         environment["CUDA_VISIBLE_DEVICES"] = gpu_id
         environment["PYTORCH_ALLOC_CONF"] = "backend:cudaMallocAsync"
@@ -305,6 +341,32 @@ def run_experiment(
         if log_path.is_relative_to(repo_root)
         else str(log_path),
     }
+    tracking_path = tracking_dir / "tracking.json"
+    if tracking_path.is_file():
+        try:
+            tracking = json.loads(tracking_path.read_text(encoding="utf-8"))
+            final_record["tracking"] = tracking
+            final_record["wandb_url"] = tracking.get("run_url")
+            final_record["source_sha256"] = tracking.get("source_sha256")
+            if wandb_mode != "disabled" and not _tracking_matches(
+                tracking, wandb_mode, wandb_project, wandb_entity
+            ):
+                success = False
+                final_record["status"] = "failed"
+                error = "Experiment tracking did not complete successfully"
+            snapshot = tracking.get("summary", {})
+            if metrics is not None and all(f"best/{key}" in snapshot for key in metrics):
+                final_record["metrics"] = {
+                    key: snapshot[f"best/{key}"] for key in metrics
+                }
+        except (OSError, ValueError) as exc:
+            success = False
+            final_record["status"] = "failed"
+            error = f"Cannot read tracking evidence: {exc}"
+    elif wandb_mode != "disabled":
+        success = False
+        final_record["status"] = "failed"
+        error = "Requested W&B recording is missing tracking.json evidence"
     if error:
         final_record["error"] = error
     elif exit_code == 0 and metrics is None:
@@ -350,6 +412,7 @@ def write_summary_csv(path: Path, manifest: dict) -> None:
         "mrr",
         "duration_seconds",
         "comparison",
+        "wandb_url",
     ]
     with path.open("w", encoding="utf-8", newline="") as csv_file:
         writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
@@ -376,6 +439,7 @@ def write_summary_csv(path: Path, manifest: dict) -> None:
                     "mrr": metrics.get("mrr", ""),
                     "duration_seconds": record.get("duration_seconds", ""),
                     "comparison": _comparison(experiment, metrics),
+                    "wandb_url": record.get("wandb_url", ""),
                 }
             )
 
@@ -391,6 +455,9 @@ def execute_queues(
     epochs: int = 1000,
     checkpoint: int = 10,
     batch_size: int = 512,
+    wandb_mode: str = "offline",
+    wandb_project: str = "humea-reproduction",
+    wandb_entity: str | None = None,
 ) -> bool:
     """Run one sequential experiment queue per GPU, concurrently."""
 
@@ -410,6 +477,9 @@ def execute_queues(
                 epochs=epochs,
                 checkpoint=checkpoint,
                 batch_size=batch_size,
+                wandb_mode=wandb_mode,
+                wandb_project=wandb_project,
+                wandb_entity=wandb_entity,
             ):
                 return False
         return True
@@ -491,6 +561,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=512,
         help="Training batch size (paper and default: 512)",
     )
+    parser.add_argument("--wandb-mode", choices=["online", "offline", "disabled"],
+                        default=os.environ.get("WANDB_MODE", "offline"))
+    parser.add_argument("--wandb-project",
+                        default=os.environ.get("WANDB_PROJECT", "humea-reproduction"))
+    parser.add_argument("--wandb-entity", default=os.environ.get("WANDB_ENTITY"))
 
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("validate", help="Validate dependencies, data, and CUDA")
@@ -581,6 +656,9 @@ def main(argv: list[str] | None = None) -> int:
         epochs=12 if args.command == "smoke" else 1000,
         checkpoint=10,
         batch_size=args.batch_size,
+        wandb_mode=args.wandb_mode,
+        wandb_project=args.wandb_project,
+        wandb_entity=args.wandb_entity,
     )
     return 0 if success else 1
 

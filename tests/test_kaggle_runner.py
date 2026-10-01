@@ -1,4 +1,5 @@
 import json
+import csv
 import sys
 import threading
 from pathlib import Path
@@ -177,6 +178,34 @@ class FakeProcess:
         return self.returncode
 
 
+def test_enabled_tracking_does_not_reuse_legacy_or_disabled_results():
+    record = {"status": "success", "metrics": {"mrr": 0.5}}
+    manifest = {"experiments": {"db15k-20": record}}
+    assert not should_skip(manifest, "db15k-20", force=False, wandb_mode="offline")
+    record["tracking"] = {"mode": "disabled", "status": "completed"}
+    assert not should_skip(manifest, "db15k-20", force=False, wandb_mode="online")
+    record["tracking"] = {"mode": "offline", "status": "completed"}
+    assert should_skip(manifest, "db15k-20", force=False, wandb_mode="offline")
+    assert not should_skip(manifest, "db15k-20", force=False, wandb_mode="online")
+    record["tracking"].update(mode="online", run_url="https://wandb.ai/team/project/runs/x",
+                              project="project", entity="team")
+    assert should_skip(manifest, "db15k-20", force=False, wandb_mode="online",
+                       wandb_project="project", wandb_entity="team")
+    assert not should_skip(manifest, "db15k-20", force=False, wandb_mode="online",
+                           wandb_project="another", wandb_entity="team")
+
+
+def test_missing_tracking_evidence_fails_an_enabled_run(tmp_path, monkeypatch):
+    monkeypatch.setattr(kaggle_runner.subprocess, "Popen", lambda *a, **kw: FakeProcess([
+        "Best avg epoch <10>: acc@[1, 5, 10]=[0.1 0.2 0.3], mr=50, mrr=0.15\n"
+    ]))
+    assert not run_experiment(
+        repo_root=tmp_path, artifacts_dir=tmp_path / "artifacts",
+        experiment=EXPERIMENTS["db15k-20"], gpu_id="cpu", manifest={"version": 1, "experiments": {}},
+        manifest_lock=threading.Lock(), wandb_mode="offline",
+    )
+
+
 def test_run_experiment_records_log_manifest_and_metrics(tmp_path, monkeypatch):
     best_line = (
         "Best avg epoch <330>: acc@[1, 5, 10]="
@@ -187,6 +216,9 @@ def test_run_experiment_records_log_manifest_and_metrics(tmp_path, monkeypatch):
     def fake_popen(command, **kwargs):
         captured["command"] = command
         captured["kwargs"] = kwargs
+        (Path(kwargs["env"]["HUMEA_TRACKING_DIR"]) / "tracking.json").write_text(
+            json.dumps({"mode": "offline", "status": "completed"})
+        )
         return FakeProcess(["training\n", best_line])
 
     monkeypatch.setattr(kaggle_runner.subprocess, "Popen", fake_popen)
@@ -216,6 +248,12 @@ def test_run_experiment_records_log_manifest_and_metrics(tmp_path, monkeypatch):
     assert record["metrics"]["hits1"] == 0.51175
     assert record["command"] == captured["command"]
     assert record["duration_seconds"] >= 0
+    assert captured["kwargs"]["env"]["WANDB_MODE"] == "offline"
+    assert captured["kwargs"]["env"]["WANDB_PROJECT"] == "humea-reproduction"
+    assert captured["kwargs"]["env"]["HUMEA_JOB_TYPE"] == "main"
+    assert Path(captured["kwargs"]["env"]["HUMEA_TRACKING_DIR"]).is_relative_to(
+        tmp_path / "artifacts" / "tracking"
+    )
     assert (tmp_path / "artifacts" / "manifest.json").is_file()
 
 
@@ -228,6 +266,9 @@ def test_cpu_run_overrides_train_device(tmp_path, monkeypatch):
 
     def fake_popen(command, **kwargs):
         captured["command"] = command
+        (Path(kwargs["env"]["HUMEA_TRACKING_DIR"]) / "tracking.json").write_text(
+            json.dumps({"mode": "offline", "status": "completed"})
+        )
         return FakeProcess([best_line])
 
     monkeypatch.setattr(kaggle_runner.subprocess, "Popen", fake_popen)
@@ -243,6 +284,55 @@ def test_cpu_run_overrides_train_device(tmp_path, monkeypatch):
         epochs=12,
     )
     assert captured["command"][captured["command"].index("--device") + 1] == "cpu"
+
+
+def test_runner_preserves_tracking_evidence_and_online_settings(tmp_path, monkeypatch):
+    def fake_popen(command, **kwargs):
+        env = kwargs["env"]
+        assert env["WANDB_MODE"] == "online"
+        assert env["WANDB_PROJECT"] == "course-humea"
+        assert env["WANDB_ENTITY"] == "student-team"
+        assert env["HUMEA_JOB_TYPE"] == "smoke"
+        tracking_dir = Path(env["HUMEA_TRACKING_DIR"])
+        tracking_dir.mkdir(parents=True, exist_ok=True)
+        (tracking_dir / "tracking.json").write_text(json.dumps({
+            "run_url": "https://wandb.ai/student-team/course-humea/runs/abc",
+            "run_id": "abc", "mode": "online", "status": "completed",
+            "project": "course-humea", "entity": "student-team",
+        }))
+        return FakeProcess([
+            "Best avg epoch <10>: acc@[1, 5, 10]=[0.1 0.2 0.3], mr=50, mrr=0.15\n"
+        ])
+
+    monkeypatch.setattr(kaggle_runner.subprocess, "Popen", fake_popen)
+    manifest = {"version": 1, "experiments": {}}
+    assert run_experiment(
+        repo_root=tmp_path, artifacts_dir=tmp_path / "artifacts",
+        experiment=EXPERIMENTS["db15k-20"], gpu_id="0", manifest=manifest,
+        manifest_lock=threading.Lock(), run_id="smoke-db15k-20", epochs=12,
+        wandb_mode="online", wandb_project="course-humea", wandb_entity="student-team",
+    )
+    record = manifest["experiments"]["smoke-db15k-20"]
+    assert record["wandb_url"].endswith("/runs/abc")
+    assert record["tracking"]["mode"] == "online"
+
+
+def test_failed_tracking_cannot_mark_training_as_successful(tmp_path, monkeypatch):
+    def fake_popen(command, **kwargs):
+        path = Path(kwargs["env"]["HUMEA_TRACKING_DIR"]) / "tracking.json"
+        path.write_text(json.dumps({"mode": "offline", "status": "failed"}))
+        return FakeProcess([
+            "Best avg epoch <10>: acc@[1, 5, 10]=[0.1 0.2 0.3], mr=50, mrr=0.15\n"
+        ])
+
+    monkeypatch.setattr(kaggle_runner.subprocess, "Popen", fake_popen)
+    manifest = {"version": 1, "experiments": {}}
+    assert not run_experiment(
+        repo_root=tmp_path, artifacts_dir=tmp_path / "artifacts",
+        experiment=EXPERIMENTS["db15k-20"], gpu_id="cpu", manifest=manifest,
+        manifest_lock=threading.Lock(),
+    )
+    assert manifest["experiments"]["db15k-20"]["status"] == "failed"
 
 
 def test_summary_marks_metrics_close_to_paper(tmp_path):
@@ -270,7 +360,9 @@ def test_summary_marks_metrics_close_to_paper(tmp_path):
 
     summary = summary_path.read_text()
     assert "db15k-20,FB15K_DB15K,0.2,384,0,success,330" in summary
-    assert summary.rstrip().endswith(",close")
+    with summary_path.open(newline="") as stream:
+        row = next(csv.DictReader(stream))
+    assert row["comparison"] == "close"
 
 
 def test_failed_experiment_stops_only_its_gpu_queue(tmp_path, monkeypatch):

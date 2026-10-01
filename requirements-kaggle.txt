@@ -1,0 +1,4 @@
+# Keep Kaggle's preinstalled CUDA-enabled PyTorch and scientific stack.
+loguru==0.7.3
+gdown==5.2.0
+wandb==0.30.0

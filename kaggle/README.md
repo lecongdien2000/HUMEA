@@ -1,131 +1,44 @@
-# Reproducing HUMEA on Kaggle
+# Run HUMEA on Kaggle
 
-This workflow runs the six non-iterative main-result experiments from the HUMEA paper. It reuses the authors' released image, attribute, and relation features; it still trains the HUMEA alignment model from scratch for 1,000 epochs.
+Start with the [root reproduction guide](../README.md) for environment, commands, configuration, W&B sharing and interruption handling.
 
-The model files and training loop are unchanged. `kaggle_runner.py` adds preflight checks, experiment selection, two-GPU scheduling, experiment-level resume, logs, and a CSV summary.
+## Prepare source and data
 
-## Expected runtime
+1. Commit the source revision used for the experiment and create `HUMEA-kaggle-bundle.zip` using `git archive` as described in the root guide.
+2. Upload the bundle to a Kaggle Dataset and attach it to the notebook.
+3. Attach the authors' processed `data.zip`, or an extracted Dataset whose root contains `mmkb-datasets/`. The notebook can download the original archive with Internet and `DOWNLOAD_DATA_IF_MISSING` enabled.
+4. Import [humea_kaggle.ipynb](humea_kaggle.ipynb).
 
-| Work | Kaggle T4 estimate |
-|---|---:|
-| Setup and archive extraction | 10–30 minutes |
-| 12-epoch smoke test | 5–15 minutes |
-| First experiment (`db15k-20`) | 45–75 minutes |
-| All six on one T4 | 7–10 hours |
-| All six on T4 x2 | 4–6 hours |
-| Full T4 x2 workflow including setup/export | 4.5–6.5 hours |
+The notebook discovers attached source files or the ZIP automatically. Data must contain both `FB15K_DB15K` and `FB15K_YAGO15K` under `mmkb-datasets/` for full validation.
 
-Times are estimates. Kaggle load, CUDA/PyTorch versions, and evaluation time can change them.
+## Configure the session
 
-## 1. Create the source bundle
-
-From the completed HUMEA repository, create a ZIP containing only tracked files:
-
-```bash
-git archive --format=zip --output HUMEA-kaggle-bundle.zip HEAD
-```
-
-Create a private Kaggle Dataset and upload `HUMEA-kaggle-bundle.zip`. The notebook supports either Kaggle-expanded source files or the attached ZIP itself, so the Dataset slug does not matter.
-
-## 2. Attach the processed data
-
-Download the authors' [`data.zip`](https://drive.google.com/file/d/1a3aou1qe7Yzq6y_khyTq1La_kf3UI7sC/view?usp=drive_link) and upload it to another private Kaggle Dataset. Attach both private Datasets to the notebook.
-
-Attaching the data is recommended because it avoids a Google Drive download on every clean Kaggle session. The notebook supports three data layouts, in this order:
-
-1. An attached, already-extracted directory containing `mmkb-datasets/`.
-2. An attached file named `data.zip`.
-3. A one-time Google Drive download when Internet is enabled.
-
-After setup, the runner requires these directories:
-
-```text
-/kaggle/working/HUMEA/data/mmkb-datasets/FB15K_DB15K
-/kaggle/working/HUMEA/data/mmkb-datasets/FB15K_YAGO15K
-```
-
-Do not run `data_process/` for the main reproduction. The archive already contains the feature dictionaries consumed by `train.py`.
-
-## 3. Import and configure the notebook
-
-Import [`humea_kaggle.ipynb`](humea_kaggle.ipynb) into Kaggle and choose a GPU accelerator. Select T4 x2 when it is available. Internet can remain off when both source and data Datasets are attached.
-
-The configuration cell contains:
+Select an NVIDIA Tesla T4 accelerator. One GPU runs one queue; T4 x2 can run two dataset queues concurrently. Preserve Kaggle's preinstalled CUDA-enabled PyTorch and scientific packages. Setup installs pinned additions from `requirements-kaggle.txt`; Internet is required unless those packages are already supplied locally.
 
 ```python
-MODE = "single"       # validate | smoke | single | all
+MODE = "single"                  # validate | smoke | single | all
 EXPERIMENT = "db15k-20"
-BATCH_SIZE = 512          # Paper setting; checkpointed for Kaggle T4
+BATCH_SIZE = 512
 DOWNLOAD_DATA_IF_MISSING = True
+WANDB_MODE = "online"            # offline supports later synchronization
+WANDB_PROJECT = "humea-reproduction"
+WANDB_ENTITY = "YOUR_ACCOUNT_OR_TEAM"
 ```
 
-Use the modes in this order:
+For online recording, add `WANDB_API_KEY` in Kaggle Secrets and grant the notebook access. The notebook reads it without printing or embedding it. Enable Internet for W&B synchronization.
 
-1. `validate`: check dependencies, all released inputs, and visible GPUs without training.
-2. `smoke`: run `db15k-20` for 12 epochs and evaluate at epoch 10.
-3. `single`: run the experiment selected by `EXPERIMENT` for 1,000 epochs.
-4. `all`: run all six 1,000-epoch configurations.
+Run `validate`, then `smoke`, then `single`. `all` launches the six configurations in the root guide. Each run logs scalar losses per epoch and evaluation history every 10 epochs, with source/environment evidence.
 
-The accepted experiment IDs are:
+## Save and share evidence
 
-```text
-db15k-20  db15k-50  db15k-80
-yago15k-20  yago15k-50  yago15k-80
-```
+Download `/kaggle/working/HUMEA-results.zip` after execution. It includes logs, manifests, configuration, W&B records, source snapshots and environment versions. The failure path also attempts to package available evidence.
 
-For `all` on two visible GPUs, GPU 0 runs the three DB15K configurations sequentially while GPU 1 runs the three YAGO15K configurations sequentially. With one GPU, all six run sequentially.
+Offline history must be synchronized using `wandb sync` before it provides a public experiment link. Follow the root guide's sharing instructions. A Kaggle notebook link or local CSV alone does not meet the lecturer's W&B requirement.
 
-## Direct runner commands
+Keep the source revision, notebook configuration, dataset source and W&B run URL together. Cite the group's GitHub repository in the report's reproduction section and the corresponding public W&B links in each results section.
 
-The notebook calls the following commands from `/kaggle/working/HUMEA`. They can also be used in a terminal:
+## Session limits
 
-```bash
-python kaggle_runner.py validate
-python kaggle_runner.py smoke
-python kaggle_runner.py --batch-size 512 single --experiment db15k-20
-python kaggle_runner.py --batch-size 512 all
-```
+Interrupted experiments restart at epoch 0. Other successful experiments can be skipped if their `artifacts/` directory is restored. The notebook creates a clean source directory, so restore previous artifacts after the source-copy cell and before training.
 
-Use direct Python execution on Kaggle. Do not run `uv sync`: Kaggle already supplies the CUDA-enabled PyTorch stack, and recreating the lockfile environment downloads an unnecessary CUDA stack.
-
-## Outputs and resume behavior
-
-Each run produces:
-
-```text
-artifacts/
-├── logs/<experiment-id>.log
-├── manifest.json
-└── summary.csv
-```
-
-The notebook also creates `/kaggle/working/HUMEA-results.zip`. Save a Kaggle notebook version with outputs enabled before ending the session.
-
-The runner skips a successful experiment only when its manifest entry contains parsed final metrics. Use global option `--force` before the subcommand to rerun it:
-
-```bash
-python kaggle_runner.py --force single --experiment db15k-20
-```
-
-HUMEA does not save training checkpoints. A failed or interrupted experiment restarts at epoch 0, while other experiments already completed in `manifest.json` remain reusable if the Kaggle output is restored into the next session.
-
-## Expected first result
-
-The paper target for `db15k-20` is:
-
-| Hits@1 | Hits@5 | Hits@10 | MRR |
-|---:|---:|---:|---:|
-| 0.5118 | 0.6997 | 0.7643 | 0.5980 |
-
-`summary.csv` records the batch size and labels a result `close` when all four metrics are within 0.01 absolute of their paper targets. This label is diagnostic, not a replacement for reporting the actual values.
-
-The upstream losses originally normalized every entity embedding before selecting each mini-batch; live T4 tests showed that this retained redundant full-table autograd graphs. The included `loss.py` compatibility patch selects the batch rows before applying the same row-wise L2 normalization. These operations are mathematically equivalent and use less memory. The authors also retain every mini-batch loss graph until one final backward pass. The runner therefore applies PyTorch non-reentrant gradient checkpointing to the loss calls and each MI estimator after its expert pair has been selected, and uses CUDA's asynchronous allocator to avoid split-block fragmentation during recomputation. The full encoder is deliberately not checkpointed because rebuilding all full-table modalities late in backward raises peak memory. The MoE adaptor keeps expert outputs as a list and accumulates the same gated expert sum one expert at a time, avoiding full entity-by-expert-by-feature product and gradient tensors. The sparse graph-attention backward computes adjacency-value gradients in bounded edge chunks rather than constructing a dense entity-by-entity gradient matrix or gathering every edge at once. Regression tests cover output and gradient equivalence against the materialized formulas. These changes preserve the computation at the cost of recomputation. Because checkpointing avoids retaining the quadratic loss intermediates, the notebook uses the paper batch size 512. Report the implementation-level memory patches; the loss formula, model architecture, seed, features, learning rate, batch size, and 1,000-epoch schedule are unchanged.
-
-## Troubleshooting
-
-- **`kaggle_runner.py` not found:** attach the private Dataset created from `HUMEA-kaggle-bundle.zip`.
-- **Missing dataset files:** inspect the validation list and confirm `data.zip` contains both `mmkb-datasets` directories at the expected nesting level.
-- **No CUDA GPU is visible:** enable a GPU accelerator and restart the session. `--allow-cpu` exists for runner tests, not practical reproduction.
-- **CUDA out of memory:** confirm the batch-before-normalization and gradient-checkpoint patches are present. If a smaller GPU still fails, use a GPU with more memory; reducing the batch after checkpointing can increase checkpoint-record overhead because this implementation accumulates all batch losses before backward.
-- **A process exits without metrics:** open `artifacts/logs/<experiment-id>.log`. The manifest records the exit code and does not mark the run successful.
-- **Session interruption:** restore the previous `artifacts/` directory before rerunning. Completed experiments are skipped; the interrupted one starts over.
+For errors, inspect `artifacts/logs/<experiment-id>.log` and `manifest.json`. Document changes to batch size, temperatures or other reproduction settings in the report.
