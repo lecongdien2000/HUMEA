@@ -12,6 +12,7 @@ from loguru import logger
 
 from layers import MultiLossLayer
 from loss import ial_loss, icl_loss
+from memory_utils import checkpoint_loss
 from model import MIEstimator, MultiModalEncoder, list_rebul_sort
 from utils import (
     csls_sim,
@@ -341,12 +342,12 @@ class HUMEA:
         self, gph_emb, rel_emb, att_emb, att_text_emb, rel_text_emb, img_emb, train_ill
     ):
         zoom = self.args.cl_loss
-        loss_GCN = self.criterion_cl(gph_emb, train_ill)
-        loss_rel = self.criterion_cl(rel_emb, train_ill)
-        loss_att = self.criterion_cl(att_emb, train_ill)
-        loss_img = self.criterion_cl(img_emb, train_ill)
-        loss_att_text = self.criterion_cl(att_text_emb, train_ill)
-        loss_rel_text = self.criterion_cl(rel_text_emb, train_ill)
+        loss_GCN = checkpoint_loss(self.criterion_cl, gph_emb, train_ill)
+        loss_rel = checkpoint_loss(self.criterion_cl, rel_emb, train_ill)
+        loss_att = checkpoint_loss(self.criterion_cl, att_emb, train_ill)
+        loss_img = checkpoint_loss(self.criterion_cl, img_emb, train_ill)
+        loss_att_text = checkpoint_loss(self.criterion_cl, att_text_emb, train_ill)
+        loss_rel_text = checkpoint_loss(self.criterion_cl, rel_text_emb, train_ill)
 
         total_loss = (
             self.multi_loss_layer(
@@ -368,12 +369,24 @@ class HUMEA:
         train_ill,
     ):
         zoom = self.args.al_loss
-        loss_GCN = self.criterion_align(gph_emb, joint_emb, train_ill)
-        loss_rel = self.criterion_align(rel_emb, joint_emb, train_ill)
-        loss_att = self.criterion_align(att_emb, joint_emb, train_ill)
-        loss_img = self.criterion_align(img_emb, joint_emb, train_ill)
-        loss_att_text = self.criterion_align(att_text_emb, joint_emb, train_ill)
-        loss_rel_text = self.criterion_align(rel_text_emb, joint_emb, train_ill)
+        loss_GCN = checkpoint_loss(
+            self.criterion_align, gph_emb, joint_emb, train_ill
+        )
+        loss_rel = checkpoint_loss(
+            self.criterion_align, rel_emb, joint_emb, train_ill
+        )
+        loss_att = checkpoint_loss(
+            self.criterion_align, att_emb, joint_emb, train_ill
+        )
+        loss_img = checkpoint_loss(
+            self.criterion_align, img_emb, joint_emb, train_ill
+        )
+        loss_att_text = checkpoint_loss(
+            self.criterion_align, att_text_emb, joint_emb, train_ill
+        )
+        loss_rel_text = checkpoint_loss(
+            self.criterion_align, rel_text_emb, joint_emb, train_ill
+        )
 
         total_loss = (
             self.align_multi_loss_layer(
@@ -466,8 +479,10 @@ class HUMEA:
             del gph_emb, rel_emb, att_emb, att_text_emb, rel_text_emb, img_emb
             torch.cuda.empty_cache()
             for si in np.arange(0, self.train_list.shape[0], bsize):
-                loss_joi = self.criterion_cl(
-                    joint_emb, self.train_list[si : si + bsize]
+                loss_joi = checkpoint_loss(
+                    self.criterion_cl,
+                    joint_emb,
+                    self.train_list[si : si + bsize],
                 )
                 loss_all.append(loss_joi)
 

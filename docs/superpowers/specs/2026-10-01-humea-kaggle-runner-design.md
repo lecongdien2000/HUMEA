@@ -23,7 +23,7 @@ The workflow will reuse the authors' released image, attribute, and relation fea
 
 The Kaggle notebook will be a thin interface over a repository-owned Python runner. The runner will contain the experiment registry, dataset validation, command construction, GPU scheduling, result-state tracking, and summary generation. The notebook will handle only Kaggle-specific setup: locating or downloading the archive, extracting it, checking the GPU environment, selecting a mode, invoking the runner, and packaging output.
 
-This separation keeps orchestration testable outside Kaggle. Live validation later required one mathematically equivalent `loss.py` memory patch: select mini-batch rows before row-wise normalization so redundant full-table autograd graphs are not retained on a 15 GiB T4. `train.py`, `model.py`, `layers.py`, and `utils.py` remain unchanged.
+This separation keeps orchestration testable outside Kaggle. Live validation later required two memory-equivalent T4 compatibility changes: select mini-batch rows before row-wise normalization in `loss.py`, and gradient-checkpoint the loss calls in `train.py` so their intermediates are recomputed during backward rather than retained across every mini-batch. `model.py`, `layers.py`, and `utils.py` remain unchanged.
 
 ## User Modes
 
