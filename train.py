@@ -3,6 +3,7 @@ import os
 import random
 import time
 from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -11,8 +12,13 @@ import torch.optim as optim
 from loguru import logger
 
 from layers import MultiLossLayer
+from experiment_tracking import ExperimentTracker
 from loss import ial_loss, icl_loss
-from memory_utils import checkpoint_loss
+from memory_utils import (
+    backward_through_gradient_bridge,
+    checkpoint_loss,
+    gradient_proxy,
+)
 from model import MIEstimator, MultiModalEncoder, list_rebul_sort
 from utils import (
     csls_sim,
@@ -76,9 +82,10 @@ def load_rel_txt_features(ent_num, file_dir):
 
 
 class HUMEA:
-    def __init__(self):
+    def __init__(self, args=None, tracker=None):
         self.parser = argparse.ArgumentParser()
-        self.args = self.parse_options(self.parser)
+        self.args = args if args is not None else self.parse_options(self.parser)
+        self.tracker = tracker
         self.set_seed(self.args.seed, True)
         self.device = torch.device(self.args.device)
         self.init_data()
@@ -221,6 +228,7 @@ class HUMEA:
         self.ENT_NUM = len(self.ent2id_dict)
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         log_file = f"{self.train_name}_{timestamp}.log"
+        self.training_log_path = Path("log") / log_file
         logger.add("log/" + log_file)
         np.random.shuffle(self.ills)
         self.img_features = F.normalize(
@@ -404,6 +412,9 @@ class HUMEA:
 
         self.input_idx = torch.LongTensor(np.arange(self.ENT_NUM)).to(device)
         for epoch in range(0, self.args.epochs):
+            epoch_started = time.monotonic()
+            if device.type == "cuda":
+                torch.cuda.reset_peak_memory_stats(device)
             self.multimodal_encoder.train()
             self.multi_loss_layer.train()
             self.align_multi_loss_layer.train()
@@ -432,7 +443,38 @@ class HUMEA:
                 self.rel_txt_features,
                 exp_outputs=True,
             )
-            loss_all = [self.args.mi_loss * self.mi_estimator(embeddings)]
+            encoder_outputs = [
+                gph_emb,
+                img_emb,
+                rel_emb,
+                att_emb,
+                att_text_emb,
+                rel_text_emb,
+                joint_emb,
+            ]
+            encoder_proxies = [gradient_proxy(output) for output in encoder_outputs]
+            (
+                gph_loss_emb,
+                img_loss_emb,
+                rel_loss_emb,
+                att_loss_emb,
+                att_text_loss_emb,
+                rel_text_loss_emb,
+                joint_loss_emb,
+            ) = encoder_proxies
+            expert_outputs = [
+                output for outputs in embeddings.values() for output in outputs
+            ]
+            proxy_embeddings = {
+                key: [gradient_proxy(output) for output in outputs]
+                for key, outputs in embeddings.items()
+            }
+            expert_proxies = [
+                output for outputs in proxy_embeddings.values() for output in outputs
+            ]
+            loss_all = [self.args.mi_loss * self.mi_estimator(proxy_embeddings)]
+            epoch_losses = {"mi": float(loss_all[0].detach()), "inner": 0.0,
+                            "alignment": 0.0, "joint": 0.0}
             np.random.shuffle(self.train_ill)
             if epoch <= self.args.il_start:
                 if epoch % 50 == 0:
@@ -452,43 +494,77 @@ class HUMEA:
                 if self.args.without != 7:
                     # single model align
                     in_loss = self.inner_view_loss(
-                        gph_emb,
-                        rel_emb,
-                        att_emb,
-                        att_text_emb,
-                        rel_text_emb,
-                        img_emb,
+                        gph_loss_emb,
+                        rel_loss_emb,
+                        att_loss_emb,
+                        att_text_loss_emb,
+                        rel_text_loss_emb,
+                        img_loss_emb,
                         self.train_list[si : si + bsize],
                     )
                     loss_all.append(in_loss)
+                    epoch_losses["inner"] += float(in_loss.detach())
 
                 if self.args.without != 8:
                     # joint align to single
                     in_loss = self.kl_alignment_loss(
-                        joint_emb,
-                        gph_emb,
-                        rel_emb,
-                        att_emb,
-                        att_text_emb,
-                        rel_text_emb,
-                        img_emb,
+                        joint_loss_emb,
+                        gph_loss_emb,
+                        rel_loss_emb,
+                        att_loss_emb,
+                        att_text_loss_emb,
+                        rel_text_loss_emb,
+                        img_loss_emb,
                         self.train_list[si : si + bsize],
                     )
                     loss_all.append(in_loss)
+                    epoch_losses["alignment"] += float(in_loss.detach())
 
-            del gph_emb, rel_emb, att_emb, att_text_emb, rel_text_emb, img_emb
             torch.cuda.empty_cache()
+            in_loss = loss_joi = None
             for si in np.arange(0, self.train_list.shape[0], bsize):
                 loss_joi = checkpoint_loss(
                     self.criterion_cl,
-                    joint_emb,
+                    joint_loss_emb,
                     self.train_list[si : si + bsize],
                 )
                 loss_all.append(loss_joi)
+                epoch_losses["joint"] += float(loss_joi.detach())
 
+            epoch_losses["total"] = float(sum(loss_all).detach())
             torch.cuda.empty_cache()
             sum(loss_all).backward()
+            bridge_outputs = encoder_outputs + expert_outputs
+            bridge_proxies = encoder_proxies + expert_proxies
+            del loss_all, proxy_embeddings, in_loss, loss_joi
+            torch.cuda.empty_cache()
+            backward_through_gradient_bridge(bridge_outputs, bridge_proxies)
             self.optimizer.step()
+
+            del (
+                bridge_outputs,
+                bridge_proxies,
+                encoder_outputs,
+                encoder_proxies,
+                expert_outputs,
+                expert_proxies,
+                embeddings,
+                gph_emb,
+                img_emb,
+                rel_emb,
+                att_emb,
+                att_text_emb,
+                rel_text_emb,
+                joint_emb,
+                gph_loss_emb,
+                img_loss_emb,
+                rel_loss_emb,
+                att_loss_emb,
+                att_text_loss_emb,
+                rel_text_loss_emb,
+                joint_loss_emb,
+            )
+            torch.cuda.empty_cache()
 
             # train estimator
             self.mi_estimator.train()
@@ -508,10 +584,18 @@ class HUMEA:
             estimator_loss = self.mi_estimator.train_estimator(embeddings)
             estimator_loss.backward()
             self.mi_optimizer.step()
+            epoch_losses["estimator"] = float(estimator_loss.detach())
+            epoch_losses["seconds"] = time.monotonic() - epoch_started
+            if device.type == "cuda":
+                epoch_losses["gpu_peak_allocated_gib"] = (
+                    torch.cuda.max_memory_allocated(device) / 1024**3
+                )
+            if self.tracker is not None:
+                self.tracker.log_losses(epoch, epoch_losses)
 
             self.optimizer.zero_grad(set_to_none=True)
             self.mi_optimizer.zero_grad(set_to_none=True)
-            del embeddings, joint_emb, loss_all, estimator_loss, _
+            del embeddings, estimator_loss, _
             torch.cuda.empty_cache()
 
             if epoch != 0 and epoch % self.args.check_point == 0:
@@ -558,6 +642,11 @@ class HUMEA:
             }
             for name, emb in results.items():
                 acc, mr, mrr = self.evaluate_embedding(emb, f"epoch {epoch} - {name}")
+                if self.tracker is not None:
+                    self.tracker.log_evaluation(epoch, {
+                        "hits1": float(acc[0]), "hits5": float(acc[1]),
+                        "hits10": float(acc[2]), "mr": float(mr), "mrr": float(mrr),
+                    })
                 if mrr > best_mrr:
                     best_mrr = mrr
                     best_result = (epoch, name, acc, mr, mrr)
@@ -619,9 +708,40 @@ class HUMEA:
 
 
 if __name__ == "__main__":
-    model = HUMEA()
-    model.train()
-    (epoch, name, acc, mr, mrr) = best_result
-    logger.info(
-        f"Best avg epoch <{epoch}>: acc@{top_k}={acc}, mr={mr:.3f}, mrr={mrr:.3f}"
+    args = HUMEA.parse_options(argparse.ArgumentParser())
+    repo_root = Path(__file__).resolve().parent
+    job_type = "ablation" if args.without else os.environ.get("HUMEA_JOB_TYPE", "main")
+    name = os.environ.get("WANDB_NAME", f"{Path(args.file_dir).name}-{args.rate}-seed{args.seed}-without{args.without}")
+    tracker = ExperimentTracker.start(
+        config={**vars(args), "dataset": Path(args.file_dir).name,
+                "experiment_id": os.environ.get("HUMEA_EXPERIMENT_ID", name)},
+        repo_root=repo_root,
+        output_dir=Path(os.environ.get("HUMEA_TRACKING_DIR", repo_root / "artifacts" / "tracking" / datetime.now().strftime("%Y%m%d-%H%M%S-%f"))),
+        mode=os.environ.get("WANDB_MODE", "offline"),
+        project=os.environ.get("WANDB_PROJECT", "humea-reproduction"),
+        entity=os.environ.get("WANDB_ENTITY"), name=name, job_type=job_type,
     )
+    exit_code = 1
+    model = None
+    try:
+        # Seed/model initialization follows tracker startup so SDK initialization
+        # cannot alter the random state used by HUMEA.
+        model = HUMEA(args=args, tracker=tracker)
+        model.train()
+        if best_result is None:
+            raise RuntimeError("Training ended without an evaluation; increase --epochs or reduce --check_point")
+        (epoch, name, acc, mr, mrr) = best_result
+        logger.info(
+            f"Best avg epoch <{epoch}>: acc@{top_k}={acc}, mr={mr:.6f}, mrr={mrr:.6f}"
+        )
+        exit_code = 0
+    finally:
+        try:
+            logger.complete()
+            if model is not None:
+                tracker.attach_file(model.training_log_path)
+        except Exception:
+            tracker.finish(exit_code=1)
+            raise
+        else:
+            tracker.finish(exit_code=exit_code)
