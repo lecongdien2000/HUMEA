@@ -161,6 +161,55 @@ def should_skip(manifest: dict, experiment_id: str, *, force: bool) -> bool:
     return record.get("status") == "success" and bool(record.get("metrics"))
 
 
+def build_train_command(
+    repo_root: Path,
+    experiment: Experiment,
+    *,
+    epochs: int = 1000,
+    checkpoint: int = 10,
+) -> list[str]:
+    """Build the direct ``train.py`` command used for one paper experiment."""
+
+    del repo_root  # The subprocess cwd selects the repository; paths stay portable.
+    return [
+        sys.executable,
+        "train.py",
+        "--file_dir",
+        f"data/mmkb-datasets/{experiment.dataset}",
+        "--rate",
+        str(experiment.rate),
+        "--lr",
+        ".0005",
+        "--epochs",
+        str(epochs),
+        "--hidden_units",
+        "300,300,300",
+        "--check_point",
+        str(checkpoint),
+        "--bsize",
+        "512",
+        "--il_start",
+        "500",
+        "--csls",
+        "--csls_k",
+        "3",
+        "--seed",
+        "42",
+        "--tau_cl",
+        "0.1",
+        "--tau_al",
+        "4.0",
+        "--fusion_weight_dim",
+        str(experiment.fusion_weight_dim),
+        "--without",
+        "0",
+        "--al_loss",
+        "0.1",
+        "--cl_loss",
+        "1.0",
+    ]
+
+
 def run_experiment(
     *,
     repo_root: Path,
@@ -519,52 +568,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-
-def build_train_command(
-    repo_root: Path,
-    experiment: Experiment,
-    *,
-    epochs: int = 1000,
-    checkpoint: int = 10,
-) -> list[str]:
-    """Build the direct ``train.py`` command used for one paper experiment."""
-
-    del repo_root  # The subprocess cwd selects the repository; paths stay portable.
-    return [
-        sys.executable,
-        "train.py",
-        "--file_dir",
-        f"data/mmkb-datasets/{experiment.dataset}",
-        "--rate",
-        str(experiment.rate),
-        "--lr",
-        ".0005",
-        "--epochs",
-        str(epochs),
-        "--hidden_units",
-        "300,300,300",
-        "--check_point",
-        str(checkpoint),
-        "--bsize",
-        "512",
-        "--il_start",
-        "500",
-        "--csls",
-        "--csls_k",
-        "3",
-        "--seed",
-        "42",
-        "--tau_cl",
-        "0.1",
-        "--tau_al",
-        "4.0",
-        "--fusion_weight_dim",
-        str(experiment.fusion_weight_dim),
-        "--without",
-        "0",
-        "--al_loss",
-        "0.1",
-        "--cl_loss",
-        "1.0",
-    ]

@@ -49,6 +49,14 @@ def test_full_command_matches_paper_configuration(tmp_path: Path):
     assert "--train_ill_path" not in command
 
 
+def test_command_builder_is_defined_before_script_entrypoint():
+    source = Path(kaggle_runner.__file__).read_text(encoding="utf-8")
+
+    assert source.index("def build_train_command") < source.index(
+        'if __name__ == "__main__"'
+    )
+
+
 def test_smoke_command_runs_twelve_epochs(tmp_path: Path):
     command = build_train_command(
         tmp_path,
