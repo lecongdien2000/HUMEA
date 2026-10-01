@@ -378,3 +378,26 @@ def test_cli_smoke_uses_resume_key_distinct_from_full_run(
         },
     }
     assert not should_skip(smoke_manifest, "db15k-20", force=False)
+
+
+def test_cli_rejects_unwritable_artifact_target(tmp_path, monkeypatch, capsys):
+    make_complete_data(tmp_path, ["db15k-20"])
+    blocked_path = tmp_path / "blocked-artifacts"
+    blocked_path.write_text("this is a file, not a directory")
+    monkeypatch.setattr(kaggle_runner, "validate_runtime_dependencies", lambda: [])
+    monkeypatch.setattr(kaggle_runner, "discover_gpu_ids", lambda: ["0"])
+
+    exit_code = main(
+        [
+            "--repo-root",
+            str(tmp_path),
+            "--artifacts-dir",
+            str(blocked_path),
+            "single",
+            "--experiment",
+            "db15k-20",
+        ]
+    )
+
+    assert exit_code == 2
+    assert "Artifact directory is not writable" in capsys.readouterr().err

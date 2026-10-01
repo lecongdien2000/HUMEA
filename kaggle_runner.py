@@ -10,6 +10,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -390,6 +391,14 @@ def discover_gpu_ids() -> list[str]:
         return []
 
 
+def ensure_artifacts_writable(path: Path) -> None:
+    """Create the artifact directory and prove a file can be written there."""
+
+    path.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(prefix=".humea-write-test-", dir=path):
+        pass
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Create the command-line interface without importing heavy dependencies."""
 
@@ -483,6 +492,11 @@ def main(argv: list[str] | None = None) -> int:
         if gpu_ids
         else {"cpu": experiment_ids}
     )
+    try:
+        ensure_artifacts_writable(artifacts_dir)
+    except OSError as exc:
+        print(f"Artifact directory is not writable: {artifacts_dir}: {exc}", file=sys.stderr)
+        return 2
     manifest_path = artifacts_dir / "manifest.json"
     try:
         manifest = load_manifest(manifest_path)
