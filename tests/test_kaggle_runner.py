@@ -80,7 +80,7 @@ def test_command_accepts_smaller_kaggle_batch_size(tmp_path: Path):
     assert command[command.index("--bsize") + 1] == "384"
 
 
-def test_kaggle_notebook_defaults_to_paper_batch_size():
+def test_kaggle_notebook_defaults_to_tested_t4_batch_size():
     notebook = json.loads(
         (Path(__file__).parents[1] / "kaggle" / "humea_kaggle.ipynb").read_text(
             encoding="utf-8"
@@ -88,7 +88,7 @@ def test_kaggle_notebook_defaults_to_paper_batch_size():
     )
     source = "".join(notebook["cells"][1]["source"])
 
-    assert "BATCH_SIZE = 512" in source
+    assert "BATCH_SIZE = 384" in source
 
 
 def test_validation_accepts_complete_released_dataset(tmp_path: Path):

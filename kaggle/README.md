@@ -55,7 +55,7 @@ The configuration cell contains:
 ```python
 MODE = "single"       # validate | smoke | single | all
 EXPERIMENT = "db15k-20"
-BATCH_SIZE = 512          # Paper setting; T4-safe with the included memory patch
+BATCH_SIZE = 384          # Paper: 512; tested on a 15 GiB Kaggle T4
 DOWNLOAD_DATA_IF_MISSING = True
 ```
 
@@ -82,8 +82,8 @@ The notebook calls the following commands from `/kaggle/working/HUMEA`. They can
 ```bash
 python kaggle_runner.py validate
 python kaggle_runner.py smoke
-python kaggle_runner.py --batch-size 512 single --experiment db15k-20
-python kaggle_runner.py --batch-size 512 all
+python kaggle_runner.py --batch-size 384 single --experiment db15k-20
+python kaggle_runner.py --batch-size 384 all
 ```
 
 Use direct Python execution on Kaggle. Do not run `uv sync`: Kaggle already supplies the CUDA-enabled PyTorch stack, and recreating the lockfile environment downloads an unnecessary CUDA stack.
@@ -119,13 +119,13 @@ The paper target for `db15k-20` is:
 
 `summary.csv` records the batch size and labels a result `close` when all four metrics are within 0.01 absolute of their paper targets. This label is diagnostic, not a replacement for reporting the actual values.
 
-The notebook keeps the paper's batch size 512. The upstream losses originally normalized every entity embedding before selecting each mini-batch; live T4 tests showed that this retained redundant full-table autograd graphs and exhausted 15 GiB at batch sizes 512, 384, and 256. The included `loss.py` compatibility patch selects the batch rows before applying the same row-wise L2 normalization. These operations are mathematically equivalent, while the latter uses substantially less memory. Report this implementation-level patch when documenting the reproduction; the loss formula, model architecture, seed, features, learning rate, batch size, and 1,000-epoch schedule are unchanged.
+The upstream losses originally normalized every entity embedding before selecting each mini-batch; live T4 tests showed that this retained redundant full-table autograd graphs. The included `loss.py` compatibility patch selects the batch rows before applying the same row-wise L2 normalization. These operations are mathematically equivalent and use less memory. With that patch, the paper batch size 512 progressed farther but still filled a 15 GiB T4 on the intended quadratic similarity matrices, so the Kaggle notebook uses 384. Report both the implementation-level patch and the batch-size deviation; the loss formula, model architecture, seed, features, learning rate, and 1,000-epoch schedule are unchanged.
 
 ## Troubleshooting
 
 - **`kaggle_runner.py` not found:** attach the private Dataset created from `HUMEA-kaggle-bundle.zip`.
 - **Missing dataset files:** inspect the validation list and confirm `data.zip` contains both `mmkb-datasets` directories at the expected nesting level.
 - **No CUDA GPU is visible:** enable a GPU accelerator and restart the session. `--allow-cpu` exists for runner tests, not practical reproduction.
-- **CUDA out of memory:** first confirm the included batch-before-normalization patch is present in `loss.py`. If a smaller GPU still fails, reduce `BATCH_SIZE` from 512 to 384 and document the deviation. Running one experiment at a time does not increase per-GPU memory because every HUMEA process already uses only one T4.
+- **CUDA out of memory:** first confirm the included batch-before-normalization patch is present in `loss.py`. If a smaller GPU still fails, reduce `BATCH_SIZE` from 384 to 256 and document the deviation. Running one experiment at a time does not increase per-GPU memory because every HUMEA process already uses only one T4.
 - **A process exits without metrics:** open `artifacts/logs/<experiment-id>.log`. The manifest records the exit code and does not mark the run successful.
 - **Session interruption:** restore the previous `artifacts/` directory before rerunning. Completed experiments are skipped; the interrupted one starts over.
