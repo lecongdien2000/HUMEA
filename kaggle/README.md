@@ -55,7 +55,7 @@ The configuration cell contains:
 ```python
 MODE = "single"       # validate | smoke | single | all
 EXPERIMENT = "db15k-20"
-BATCH_SIZE = 128          # Paper: 512; 15 GiB Kaggle T4 compatibility
+BATCH_SIZE = 64           # Paper: 512; 15 GiB Kaggle T4 compatibility
 DOWNLOAD_DATA_IF_MISSING = True
 ```
 
@@ -82,8 +82,8 @@ The notebook calls the following commands from `/kaggle/working/HUMEA`. They can
 ```bash
 python kaggle_runner.py validate
 python kaggle_runner.py smoke
-python kaggle_runner.py --batch-size 128 single --experiment db15k-20
-python kaggle_runner.py --batch-size 128 all
+python kaggle_runner.py --batch-size 64 single --experiment db15k-20
+python kaggle_runner.py --batch-size 64 all
 ```
 
 Use direct Python execution on Kaggle. Do not run `uv sync`: Kaggle already supplies the CUDA-enabled PyTorch stack, and recreating the lockfile environment downloads an unnecessary CUDA stack.
@@ -119,13 +119,13 @@ The paper target for `db15k-20` is:
 
 `summary.csv` records the batch size and labels a result `close` when all four metrics are within 0.01 absolute of their paper targets. This label is diagnostic, not a replacement for reporting the actual values.
 
-The upstream losses originally normalized every entity embedding before selecting each mini-batch; live T4 tests showed that this retained redundant full-table autograd graphs. The included `loss.py` compatibility patch selects the batch rows before applying the same row-wise L2 normalization. These operations are mathematically equivalent and use less memory. The authors also retain every mini-batch loss graph until one final backward pass. The runner therefore applies PyTorch non-reentrant gradient checkpointing to the loss calls, recomputing their intermediates during backward instead of retaining them. This preserves loss values and gradients at the cost of additional compute. The Kaggle notebook uses batch size 128 for further T4 headroom. Report both implementation-level memory patches and the batch-size deviation; the loss formula, model architecture, seed, features, learning rate, and 1,000-epoch schedule are unchanged.
+The upstream losses originally normalized every entity embedding before selecting each mini-batch; live T4 tests showed that this retained redundant full-table autograd graphs. The included `loss.py` compatibility patch selects the batch rows before applying the same row-wise L2 normalization. These operations are mathematically equivalent and use less memory. The authors also retain every mini-batch loss graph until one final backward pass. The runner therefore applies PyTorch non-reentrant gradient checkpointing to the loss calls, recomputing their intermediates during backward instead of retaining them. This preserves loss values and gradients at the cost of additional compute. A checkpointed batch size of 128 reached backward but lacked 47 MiB for its final buffer, so the Kaggle notebook uses 64. Report both implementation-level memory patches and the batch-size deviation; the loss formula, model architecture, seed, features, learning rate, and 1,000-epoch schedule are unchanged.
 
 ## Troubleshooting
 
 - **`kaggle_runner.py` not found:** attach the private Dataset created from `HUMEA-kaggle-bundle.zip`.
 - **Missing dataset files:** inspect the validation list and confirm `data.zip` contains both `mmkb-datasets` directories at the expected nesting level.
 - **No CUDA GPU is visible:** enable a GPU accelerator and restart the session. `--allow-cpu` exists for runner tests, not practical reproduction.
-- **CUDA out of memory:** first confirm the included batch-before-normalization patch is present in `loss.py`. If a smaller GPU still fails, reduce `BATCH_SIZE` from 128 to 64 and document the deviation. Running one experiment at a time does not increase per-GPU memory because every HUMEA process already uses only one T4.
+- **CUDA out of memory:** confirm the batch-before-normalization and gradient-checkpoint patches are present. If a smaller GPU still fails, reduce `BATCH_SIZE` from 64 to 32 and document the deviation. Running one experiment at a time does not increase per-GPU memory because every HUMEA process already uses only one T4.
 - **A process exits without metrics:** open `artifacts/logs/<experiment-id>.log`. The manifest records the exit code and does not mark the run successful.
 - **Session interruption:** restore the previous `artifacts/` directory before rerunning. Completed experiments are skipped; the interrupted one starts over.

@@ -489,7 +489,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--batch-size",
         type=int,
         default=512,
-        help="Training batch size (paper/default: 512; Kaggle T4 notebook: 128)",
+        help="Training batch size (paper/default: 512; Kaggle T4 notebook: 64)",
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
