@@ -12,7 +12,7 @@ from loguru import logger
 
 from layers import MultiLossLayer
 from loss import ial_loss, icl_loss
-from memory_utils import checkpoint_call, checkpoint_loss
+from memory_utils import checkpoint_call, checkpoint_loss, saved_tensor_offload
 from model import MIEstimator, MultiModalEncoder, list_rebul_sort
 from utils import (
     csls_sim,
@@ -312,8 +312,7 @@ class HUMEA:
                 att_text_emb,
                 rel_text_emb,
                 joint_emb,
-            ) = checkpoint_call(
-                self.multimodal_encoder,
+            ) = self.multimodal_encoder(
                 self.device,
                 self.input_idx,
                 self.adj,
@@ -411,6 +410,8 @@ class HUMEA:
             self.mi_estimator.eval()
             self.optimizer.zero_grad()
 
+            saved_tensors = saved_tensor_offload()
+            saved_tensors.__enter__()
             (
                 [
                     gph_emb,
@@ -422,7 +423,8 @@ class HUMEA:
                     joint_emb,
                 ],
                 embeddings,
-            ) = self.multimodal_encoder(
+            ) = checkpoint_call(
+                self.multimodal_encoder,
                 self.device,
                 self.input_idx,
                 self.adj,
@@ -489,6 +491,7 @@ class HUMEA:
 
             torch.cuda.empty_cache()
             sum(loss_all).backward()
+            saved_tensors.__exit__(None, None, None)
             self.optimizer.step()
 
             # train estimator
