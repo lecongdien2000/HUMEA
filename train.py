@@ -509,6 +509,11 @@ class HUMEA:
             estimator_loss.backward()
             self.mi_optimizer.step()
 
+            self.optimizer.zero_grad(set_to_none=True)
+            self.mi_optimizer.zero_grad(set_to_none=True)
+            del embeddings, joint_emb, loss_all, estimator_loss, _
+            torch.cuda.empty_cache()
+
             if epoch != 0 and epoch % self.args.check_point == 0:
                 print("\n[epoch {:d}] checkpoint!".format(epoch))
                 self.test(epoch)

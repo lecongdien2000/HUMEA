@@ -61,3 +61,15 @@ def test_mi_networks_are_checkpointed_after_expert_pair_selection():
     )
 
     assert mi_forward < pair_selection < checkpoint
+
+
+def test_epoch_outputs_are_released_before_checkpoint_evaluation_and_next_epoch():
+    source = (Path(__file__).parents[1] / "train.py").read_text(encoding="utf-8")
+
+    estimator_step = source.index("self.mi_optimizer.step()")
+    cleanup = source.index(
+        "del embeddings, joint_emb, loss_all, estimator_loss, _", estimator_step
+    )
+    evaluation = source.index("if epoch != 0", estimator_step)
+
+    assert estimator_step < cleanup < evaluation
