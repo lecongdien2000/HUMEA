@@ -40,15 +40,15 @@ def test_cuda_cache_is_released_immediately_before_backward():
     assert source[cache_release:backward].strip() == "torch.cuda.empty_cache()"
 
 
-def test_training_checkpoints_the_main_encoder_before_backward():
+def test_training_does_not_checkpoint_the_whole_encoder_before_backward():
     source = (Path(__file__).parents[1] / "train.py").read_text(encoding="utf-8")
 
     train_method = source.index("def train(self):")
-    forward = source.index("self.multimodal_encoder,", train_method)
+    forward = source.index(") = self.multimodal_encoder(", train_method)
     backward = source.index("sum(loss_all).backward()", forward)
 
-    checkpoint_start = source.rfind("checkpoint_call(", train_method, forward)
-    assert train_method < checkpoint_start < forward < backward
+    assert "checkpoint_call(" not in source[train_method:backward]
+    assert train_method < forward < backward
 
 
 def test_mi_networks_are_checkpointed_after_expert_pair_selection():
