@@ -168,22 +168,24 @@ def run_experiment(
     gpu_id: str,
     manifest: dict,
     manifest_lock: Lock,
+    run_id: str | None = None,
     force: bool = False,
     epochs: int = 1000,
     checkpoint: int = 10,
 ) -> bool:
     """Run one experiment, stream its log, and record an atomic result."""
 
+    record_id = run_id or experiment.id
     manifest_path = artifacts_dir / "manifest.json"
     with manifest_lock:
-        if should_skip(manifest, experiment.id, force=force):
-            print(f"[skip] {experiment.id}: completed result already exists")
+        if should_skip(manifest, record_id, force=force):
+            print(f"[skip] {record_id}: completed result already exists")
             return True
 
     artifacts_dir.mkdir(parents=True, exist_ok=True)
     log_dir = artifacts_dir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / f"{experiment.id}.log"
+    log_path = log_dir / f"{record_id}.log"
     command = build_train_command(
         repo_root,
         experiment,
@@ -198,13 +200,14 @@ def run_experiment(
     started_clock = time.monotonic()
     running_record = {
         "status": "running",
+        "experiment_id": experiment.id,
         "gpu": gpu_id,
         "command": command,
         "started_at": started_at.isoformat(),
         "metrics": None,
     }
     with manifest_lock:
-        manifest["experiments"][experiment.id] = running_record
+        manifest["experiments"][record_id] = running_record
         save_manifest(manifest_path, manifest)
 
     output_lines: list[str] = []
@@ -224,7 +227,7 @@ def run_experiment(
             raise RuntimeError("Training subprocess did not expose stdout")
         with log_path.open("w", encoding="utf-8") as log_file:
             for line in process.stdout:
-                print(f"[{experiment.id}] {line}", end="")
+                print(f"[{record_id}] {line}", end="")
                 log_file.write(line)
                 output_lines.append(line)
         exit_code = process.wait()
@@ -251,7 +254,7 @@ def run_experiment(
         final_record["error"] = "Training exited successfully without final best metrics"
 
     with manifest_lock:
-        manifest["experiments"][experiment.id] = final_record
+        manifest["experiments"][record_id] = final_record
         save_manifest(manifest_path, manifest)
     return success
 
@@ -294,14 +297,15 @@ def write_summary_csv(path: Path, manifest: dict) -> None:
         writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
         writer.writeheader()
         records = manifest.get("experiments", {})
-        for experiment_id, experiment in EXPERIMENTS.items():
-            if experiment_id not in records:
+        for run_id, record in records.items():
+            experiment_id = record.get("experiment_id", run_id)
+            if experiment_id not in EXPERIMENTS:
                 continue
-            record = records[experiment_id]
+            experiment = EXPERIMENTS[experiment_id]
             metrics = record.get("metrics") or {}
             writer.writerow(
                 {
-                    "experiment": experiment_id,
+                    "experiment": run_id,
                     "dataset": experiment.dataset,
                     "rate": experiment.rate,
                     "gpu": record.get("gpu", ""),
@@ -323,6 +327,7 @@ def execute_queues(
     artifacts_dir: Path,
     queues: dict[str, list[str]],
     manifest: dict,
+    run_id_prefix: str = "",
     force: bool = False,
     epochs: int = 1000,
     checkpoint: int = 10,
@@ -340,6 +345,7 @@ def execute_queues(
                 gpu_id=gpu_id,
                 manifest=manifest,
                 manifest_lock=manifest_lock,
+                run_id=f"{run_id_prefix}{experiment_id}",
                 force=force,
                 epochs=epochs,
                 checkpoint=checkpoint,
@@ -487,6 +493,7 @@ def main(argv: list[str] | None = None) -> int:
         artifacts_dir=artifacts_dir,
         queues=queues,
         manifest=manifest,
+        run_id_prefix="smoke-" if args.command == "smoke" else "",
         force=args.force,
         epochs=12 if args.command == "smoke" else 1000,
         checkpoint=10,

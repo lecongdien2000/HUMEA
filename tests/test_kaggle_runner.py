@@ -324,3 +324,31 @@ def test_cli_allow_cpu_invokes_single_experiment(tmp_path, monkeypatch):
     assert exit_code == 0
     assert captured["queues"] == {"cpu": ["db15k-20"]}
     assert captured["epochs"] == 1000
+
+
+def test_cli_smoke_uses_resume_key_distinct_from_full_run(
+    tmp_path, monkeypatch
+):
+    make_complete_data(tmp_path, ["db15k-20"])
+    monkeypatch.setattr(kaggle_runner, "validate_runtime_dependencies", lambda: [])
+    monkeypatch.setattr(kaggle_runner, "discover_gpu_ids", lambda: ["0"])
+    captured = {}
+
+    def fake_execute_queues(**kwargs):
+        captured.update(kwargs)
+        return True
+
+    monkeypatch.setattr(kaggle_runner, "execute_queues", fake_execute_queues)
+
+    assert main(["--repo-root", str(tmp_path), "smoke"]) == 0
+    assert captured["run_id_prefix"] == "smoke-"
+    smoke_manifest = {
+        "version": 1,
+        "experiments": {
+            "smoke-db15k-20": {
+                "status": "success",
+                "metrics": {"mrr": 0.01},
+            }
+        },
+    }
+    assert not should_skip(smoke_manifest, "db15k-20", force=False)
