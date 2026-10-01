@@ -21,6 +21,11 @@ def combine_expert_outputs(gates, expert_outputs):
         combined = combined + gates[:, index : index + 1] * expert_output
     return combined
 
+
+def sparse_value_gradients(grad_output, features, indices):
+    """Compute dL/dA only at the stored sparse edges of A @ features."""
+    return (grad_output[indices[0]] * features[indices[1]]).sum(dim=-1)
+
 # !!! 需要改为执行用的GPU号码 或者改成0
 
 
@@ -31,7 +36,6 @@ class SpecialSpmmFunction(torch.autograd.Function):
     def forward(ctx, indices, values, shape, b):
         a = torch.sparse_coo_tensor(indices, values, shape)
         ctx.save_for_backward(a, b)
-        ctx.N = shape[0]
         return torch.matmul(a, b)
 
     @staticmethod
@@ -39,9 +43,7 @@ class SpecialSpmmFunction(torch.autograd.Function):
         a, b = ctx.saved_tensors
         grad_values = grad_b = None
         if ctx.needs_input_grad[1]:
-            grad_a_dense = grad_output.matmul(b.t())
-            edge_idx = a._indices()[0, :] * ctx.N + a._indices()[1, :]
-            grad_values = grad_a_dense.view(-1)[edge_idx]
+            grad_values = sparse_value_gradients(grad_output, b, a._indices())
         if ctx.needs_input_grad[3]:
             grad_b = a.t().matmul(grad_output)
         return None, grad_values, None, grad_b
