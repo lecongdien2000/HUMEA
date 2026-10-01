@@ -9,6 +9,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 from torch import nn
 
 from layers import MoEAdaptorLayer, MultiHeadGraphAttention
+from memory_utils import checkpoint_call
 
 
 class GAT(nn.Module):
@@ -153,7 +154,7 @@ class MIEstimator(nn.Module):
             idx1, idx2 = random.sample(range(n_exp), 2)
             z1 = embeddings[key][:, idx1, :]
             z2 = embeddings[key][:, idx2, :]
-            mi_losses.append(self.estimators[key](z1, z2))
+            mi_losses.append(checkpoint_call(self.estimators[key], z1, z2))
 
         return sum(mi_losses) / len(mi_losses)
 
