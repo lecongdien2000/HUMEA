@@ -69,6 +69,16 @@ def test_smoke_command_runs_twelve_epochs(tmp_path: Path):
     assert command[command.index("--check_point") + 1] == "10"
 
 
+def test_command_accepts_smaller_kaggle_batch_size(tmp_path: Path):
+    command = build_train_command(
+        tmp_path,
+        EXPERIMENTS["db15k-20"],
+        batch_size=384,
+    )
+
+    assert command[command.index("--bsize") + 1] == "384"
+
+
 def test_validation_accepts_complete_released_dataset(tmp_path: Path):
     experiment = EXPERIMENTS["db15k-20"]
     dataset_dir = tmp_path / "data" / "mmkb-datasets" / experiment.dataset
@@ -230,6 +240,7 @@ def test_summary_marks_metrics_close_to_paper(tmp_path):
             "db15k-20": {
                 "status": "success",
                 "gpu": "0",
+                "batch_size": 384,
                 "duration_seconds": 60.0,
                 "metrics": {
                     "epoch": 330,
@@ -246,7 +257,7 @@ def test_summary_marks_metrics_close_to_paper(tmp_path):
     write_summary_csv(summary_path, manifest)
 
     summary = summary_path.read_text()
-    assert "db15k-20,FB15K_DB15K,0.2,0,success,330" in summary
+    assert "db15k-20,FB15K_DB15K,0.2,384,0,success,330" in summary
     assert summary.rstrip().endswith(",close")
 
 
@@ -362,6 +373,7 @@ def test_cli_allow_cpu_invokes_single_experiment(tmp_path, monkeypatch):
     assert exit_code == 0
     assert captured["queues"] == {"cpu": ["db15k-20"]}
     assert captured["epochs"] == 1000
+    assert captured["batch_size"] == 512
 
 
 def test_cli_smoke_uses_resume_key_distinct_from_full_run(

@@ -167,6 +167,7 @@ def build_train_command(
     *,
     epochs: int = 1000,
     checkpoint: int = 10,
+    batch_size: int = 512,
 ) -> list[str]:
     """Build the direct ``train.py`` command used for one paper experiment."""
 
@@ -187,7 +188,7 @@ def build_train_command(
         "--check_point",
         str(checkpoint),
         "--bsize",
-        "512",
+        str(batch_size),
         "--il_start",
         "500",
         "--csls",
@@ -222,6 +223,7 @@ def run_experiment(
     force: bool = False,
     epochs: int = 1000,
     checkpoint: int = 10,
+    batch_size: int = 512,
 ) -> bool:
     """Run one experiment, stream its log, and record an atomic result."""
 
@@ -241,6 +243,7 @@ def run_experiment(
         experiment,
         epochs=epochs,
         checkpoint=checkpoint,
+        batch_size=batch_size,
     )
     if gpu_id == "cpu":
         command.extend(["--device", "cpu"])
@@ -257,6 +260,7 @@ def run_experiment(
         "gpu": gpu_id,
         "command": command,
         "started_at": started_at.isoformat(),
+        "batch_size": batch_size,
         "metrics": None,
     }
     with manifest_lock:
@@ -336,6 +340,7 @@ def write_summary_csv(path: Path, manifest: dict) -> None:
         "experiment",
         "dataset",
         "rate",
+        "batch_size",
         "gpu",
         "status",
         "epoch",
@@ -361,6 +366,7 @@ def write_summary_csv(path: Path, manifest: dict) -> None:
                     "experiment": run_id,
                     "dataset": experiment.dataset,
                     "rate": experiment.rate,
+                    "batch_size": record.get("batch_size", ""),
                     "gpu": record.get("gpu", ""),
                     "status": record.get("status", ""),
                     "epoch": metrics.get("epoch", ""),
@@ -384,6 +390,7 @@ def execute_queues(
     force: bool = False,
     epochs: int = 1000,
     checkpoint: int = 10,
+    batch_size: int = 512,
 ) -> bool:
     """Run one sequential experiment queue per GPU, concurrently."""
 
@@ -402,6 +409,7 @@ def execute_queues(
                 force=force,
                 epochs=epochs,
                 checkpoint=checkpoint,
+                batch_size=batch_size,
             ):
                 return False
         return True
@@ -477,6 +485,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Allow training without CUDA (intended only for runner testing)",
     )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=512,
+        help="Training batch size (paper: 512; Kaggle T4 fallback: 384)",
+    )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("validate", help="Validate dependencies, data, and CUDA")
@@ -496,6 +510,9 @@ def main(argv: list[str] | None = None) -> int:
     """CLI entry point. Return a process-style exit code."""
 
     args = build_parser().parse_args(argv)
+    if args.batch_size <= 0:
+        print("Batch size must be a positive integer.", file=sys.stderr)
+        return 2
     repo_root = args.repo_root.resolve()
     artifacts_dir = args.artifacts_dir
     if not artifacts_dir.is_absolute():
@@ -563,6 +580,7 @@ def main(argv: list[str] | None = None) -> int:
         force=args.force,
         epochs=12 if args.command == "smoke" else 1000,
         checkpoint=10,
+        batch_size=args.batch_size,
     )
     return 0 if success else 1
 
