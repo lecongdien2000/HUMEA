@@ -250,7 +250,7 @@ def run_experiment(
     environment = os.environ.copy()
     if gpu_id != "cpu":
         environment["CUDA_VISIBLE_DEVICES"] = gpu_id
-        environment["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
+        environment["PYTORCH_ALLOC_CONF"] = "backend:cudaMallocAsync"
 
     started_at = datetime.now(timezone.utc)
     started_clock = time.monotonic()

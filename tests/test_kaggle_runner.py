@@ -206,7 +206,7 @@ def test_run_experiment_records_log_manifest_and_metrics(tmp_path, monkeypatch):
     assert captured["kwargs"]["env"]["CUDA_VISIBLE_DEVICES"] == "1"
     assert (
         captured["kwargs"]["env"]["PYTORCH_ALLOC_CONF"]
-        == "expandable_segments:True"
+        == "backend:cudaMallocAsync"
     )
     log_text = (tmp_path / "artifacts" / "logs" / "db15k-20.log").read_text()
     assert "training" in log_text
