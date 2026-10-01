@@ -1,3 +1,4 @@
+import json
 import sys
 import threading
 from pathlib import Path
@@ -77,6 +78,17 @@ def test_command_accepts_smaller_kaggle_batch_size(tmp_path: Path):
     )
 
     assert command[command.index("--bsize") + 1] == "384"
+
+
+def test_kaggle_notebook_defaults_to_t4_safe_batch_size():
+    notebook = json.loads(
+        (Path(__file__).parents[1] / "kaggle" / "humea_kaggle.ipynb").read_text(
+            encoding="utf-8"
+        )
+    )
+    source = "".join(notebook["cells"][1]["source"])
+
+    assert "BATCH_SIZE = 256" in source
 
 
 def test_validation_accepts_complete_released_dataset(tmp_path: Path):

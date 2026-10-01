@@ -55,7 +55,7 @@ The configuration cell contains:
 ```python
 MODE = "single"       # validate | smoke | single | all
 EXPERIMENT = "db15k-20"
-BATCH_SIZE = 384          # Paper: 512; required on Kaggle T4
+BATCH_SIZE = 256          # Paper: 512; tested fallback for Kaggle T4
 DOWNLOAD_DATA_IF_MISSING = True
 ```
 
@@ -82,8 +82,8 @@ The notebook calls the following commands from `/kaggle/working/HUMEA`. They can
 ```bash
 python kaggle_runner.py validate
 python kaggle_runner.py smoke
-python kaggle_runner.py --batch-size 384 single --experiment db15k-20
-python kaggle_runner.py --batch-size 384 all
+python kaggle_runner.py --batch-size 256 single --experiment db15k-20
+python kaggle_runner.py --batch-size 256 all
 ```
 
 Use direct Python execution on Kaggle. Do not run `uv sync`: Kaggle already supplies the CUDA-enabled PyTorch stack, and recreating the lockfile environment downloads an unnecessary CUDA stack.
@@ -119,13 +119,13 @@ The paper target for `db15k-20` is:
 
 `summary.csv` records the batch size and labels a result `close` when all four metrics are within 0.01 absolute of their paper targets. This label is diagnostic, not a replacement for reporting the actual values.
 
-The paper command uses batch size 512. A live Kaggle T4 x2 test exhausted the 15 GiB available to one T4 before epoch 1, even with expandable CUDA segments enabled. The notebook therefore uses 384. Report this batch-size change as a hardware deviation; the model architecture, seed, features, learning rate, and 1,000-epoch schedule remain unchanged.
+The paper command uses batch size 512. Live Kaggle T4 x2 tests exhausted the 15 GiB available to one T4 before epoch 1 at both 512 and 384, even with expandable CUDA segments enabled. The notebook therefore uses 256. Report this batch-size change as a hardware deviation; the model architecture, seed, features, learning rate, and 1,000-epoch schedule remain unchanged.
 
 ## Troubleshooting
 
 - **`kaggle_runner.py` not found:** attach the private Dataset created from `HUMEA-kaggle-bundle.zip`.
 - **Missing dataset files:** inspect the validation list and confirm `data.zip` contains both `mmkb-datasets` directories at the expected nesting level.
 - **No CUDA GPU is visible:** enable a GPU accelerator and restart the session. `--allow-cpu` exists for runner tests, not practical reproduction.
-- **CUDA out of memory:** reduce `BATCH_SIZE` from 384 to 256 and document the deviation. Running one experiment at a time does not increase per-GPU memory because every HUMEA process already uses only one T4.
+- **CUDA out of memory:** reduce `BATCH_SIZE` from 256 to 192 and document the deviation. Running one experiment at a time does not increase per-GPU memory because every HUMEA process already uses only one T4.
 - **A process exits without metrics:** open `artifacts/logs/<experiment-id>.log`. The manifest records the exit code and does not mark the run successful.
 - **Session interruption:** restore the previous `artifacts/` directory before rerunning. Completed experiments are skipped; the interrupted one starts over.
