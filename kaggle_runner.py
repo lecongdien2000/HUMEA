@@ -192,6 +192,8 @@ def run_experiment(
         epochs=epochs,
         checkpoint=checkpoint,
     )
+    if gpu_id == "cpu":
+        command.extend(["--device", "cpu"])
     environment = os.environ.copy()
     if gpu_id != "cpu":
         environment["CUDA_VISIBLE_DEVICES"] = gpu_id

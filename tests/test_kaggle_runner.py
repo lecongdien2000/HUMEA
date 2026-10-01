@@ -185,6 +185,32 @@ def test_run_experiment_records_log_manifest_and_metrics(tmp_path, monkeypatch):
     assert (tmp_path / "artifacts" / "manifest.json").is_file()
 
 
+def test_cpu_run_overrides_train_device(tmp_path, monkeypatch):
+    best_line = (
+        "Best avg epoch <10>: acc@[1, 5, 10]="
+        "[0.1 0.2 0.3], mr=50.0, mrr=0.15\n"
+    )
+    captured = {}
+
+    def fake_popen(command, **kwargs):
+        captured["command"] = command
+        return FakeProcess([best_line])
+
+    monkeypatch.setattr(kaggle_runner.subprocess, "Popen", fake_popen)
+    manifest = {"version": 1, "experiments": {}}
+
+    assert run_experiment(
+        repo_root=tmp_path,
+        artifacts_dir=tmp_path / "artifacts",
+        experiment=EXPERIMENTS["db15k-20"],
+        gpu_id="cpu",
+        manifest=manifest,
+        manifest_lock=threading.Lock(),
+        epochs=12,
+    )
+    assert captured["command"][captured["command"].index("--device") + 1] == "cpu"
+
+
 def test_summary_marks_metrics_close_to_paper(tmp_path):
     manifest = {
         "version": 1,
