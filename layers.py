@@ -22,9 +22,17 @@ def combine_expert_outputs(gates, expert_outputs):
     return combined
 
 
-def sparse_value_gradients(grad_output, features, indices):
+def sparse_value_gradients(grad_output, features, indices, chunk_size=16_384):
     """Compute dL/dA only at the stored sparse edges of A @ features."""
-    return (grad_output[indices[0]] * features[indices[1]]).sum(dim=-1)
+    edge_count = indices.shape[1]
+    gradients = grad_output.new_empty(edge_count)
+    for start in range(0, edge_count, chunk_size):
+        stop = min(start + chunk_size, edge_count)
+        edge_slice = slice(start, stop)
+        gradients[edge_slice] = (
+            grad_output[indices[0, edge_slice]] * features[indices[1, edge_slice]]
+        ).sum(dim=-1)
+    return gradients
 
 # !!! 需要改为执行用的GPU号码 或者改成0
 

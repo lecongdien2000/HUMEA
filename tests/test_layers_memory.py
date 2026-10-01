@@ -45,7 +45,7 @@ def test_sparse_value_gradients_only_compute_existing_edges():
     grad_output = torch.randn(4, 5)
     features = torch.randn(4, 5)
 
-    actual = sparse_value_gradients(grad_output, features, indices)
+    actual = sparse_value_gradients(grad_output, features, indices, chunk_size=2)
     dense_reference = grad_output.matmul(features.t())
 
     torch.testing.assert_close(actual, dense_reference[indices[0], indices[1]])
