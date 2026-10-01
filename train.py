@@ -12,7 +12,7 @@ from loguru import logger
 
 from layers import MultiLossLayer
 from loss import ial_loss, icl_loss
-from memory_utils import checkpoint_loss
+from memory_utils import checkpoint_call, checkpoint_loss
 from model import MIEstimator, MultiModalEncoder, list_rebul_sort
 from utils import (
     csls_sim,
@@ -312,7 +312,8 @@ class HUMEA:
                 att_text_emb,
                 rel_text_emb,
                 joint_emb,
-            ) = self.multimodal_encoder(
+            ) = checkpoint_call(
+                self.multimodal_encoder,
                 self.device,
                 self.input_idx,
                 self.adj,
