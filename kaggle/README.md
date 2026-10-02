@@ -22,10 +22,12 @@ BATCH_SIZE = 512
 DOWNLOAD_DATA_IF_MISSING = True
 WANDB_MODE = "online"            # offline supports later synchronization
 WANDB_PROJECT = "humea-reproduction"
-WANDB_ENTITY = "YOUR_ACCOUNT_OR_TEAM"
+WANDB_ENTITY = "diencongle"
 ```
 
 For online recording, add `WANDB_API_KEY` in Kaggle Secrets and grant the notebook access. The notebook reads it without printing or embedding it. Enable Internet for W&B synchronization.
+
+The group's destination is [diencongle/humea-reproduction](https://forge.coreweave.com/wandb/diencongle/humea-reproduction). The project uses Team visibility; share view-only reports for the lecturer to view without signing in.
 
 Run `validate`, then `smoke`, then `single`. `all` launches the six configurations in the root guide. Each run logs scalar losses per epoch and evaluation history every 10 epochs, with source/environment evidence.
 

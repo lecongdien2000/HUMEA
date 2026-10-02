@@ -1,6 +1,6 @@
 # HUMEA current work
 
-Updated 2026-10-01 (Asia/Bangkok). Read this instead of old chat history.
+Updated 2026-10-02 (Asia/Bangkok). Read this instead of old chat history.
 
 ## Lecturer requirements update
 
@@ -11,8 +11,8 @@ Updated 2026-10-01 (Asia/Bangkok). Read this instead of old chat history.
 - Root and Kaggle READMEs now provide execution instructions and sharing requirements, without architecture explanations or score tables.
 - Final verification: 58 tests passed; real W&B offline smoke succeeded; notebook code compiled; `uv lock --check` and `git diff --check` passed. Review found and fixed a legacy-result resume bypass: requested tracking now requires completed evidence before reuse or success, and online reuse checks destination. Focused re-review and final suite passed. Notebook compilation and dependency lock checks also passed.
 - GitHub destination: https://github.com/lecongdien2000/HUMEA-reproduction. Changed to PRIVATE at the user's explicit request and verified through the authenticated GitHub API. The prepared tracking source was pushed to `main` at `836cce5c1af50b77e60730dab34191cdb8c45afa`; subsequent documentation commits may follow. Local remote `reproduction` targets it; `origin` remains upstream. Kaggle can execute the uploaded source bundle independently of repository visibility. The report should link this repository; arrange lecturer access if needed. W&B experiment links still require public viewing access.
-- W&B account/project setup remains pending. Edge's control connection reported `User unavailable` before the W&B page could be inspected. Reconnect Edge, discover the signed-in W&B entity, create/configure publicly viewable `humea-reproduction`, and update notebook/entity instructions. Local/offline logging alone does not satisfy the public-link requirement. No API key was generated or exposed.
-- Active Kaggle version 27 still uses the original source without W&B; it was not interrupted. Preserve its original bundle at `D:/Github/HUMEA-kaggle-deploy/archive/v27/HUMEA-kaggle-bundle.zip`. Future executions should use the new committed bundle.
+- User manually created W&B project https://forge.coreweave.com/wandb/diencongle/humea-reproduction with Team visibility (Public was unavailable). The updated notebook sets online mode, entity `diencongle`, project `humea-reproduction`. User must add and enable the `WANDB_API_KEY` Kaggle secret; its presence/access has not been verified. Share view-only reports and check signed-out viewing after real tracked runs. No API key was generated or exposed by the agent.
+- Kaggle version 27 completed the full run successfully, exit 0, process duration 3920.839 seconds. Best epoch 250: Hits@1 0.50455, Hits@5 0.6986, Hits@10 0.76265, MRR 0.594 (rounded in legacy log). Last evaluation epoch 990: MRR 0.553. Evidence downloaded to `D:/Github/HUMEA-kaggle-v27/HUMEA/artifacts/`. This legacy run has no W&B evidence. Preserve its original source bundle at `D:/Github/HUMEA-kaggle-deploy/archive/v27/HUMEA-kaggle-bundle.zip`. Future executions should use the new committed bundle and notebook.
 
 ## Objective
 
