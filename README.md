@@ -1,14 +1,23 @@
 # HUMEA experiment reproduction
 
-Code and execution instructions for the group's public [HUMEA reproduction fork](https://github.com/lecongdien2000/HUMEA), forked from the authors' [upstream HUMEA](https://github.com/mikumifa/HUMEA). This fork preserves the authors' Git history and adds Kaggle execution, GPU memory adjustments, W&B tracking and reproduction instructions. Method explanations, results and comparisons belong in the accompanying report.
+Execution instructions for the group's public [HUMEA reproduction fork](https://github.com/lecongdien2000/HUMEA), forked from the authors' [upstream HUMEA](https://github.com/mikumifa/HUMEA). Experimental results and method descriptions are presented in the accompanying report.
+
+## Get the code
+
+```bash
+git clone https://github.com/lecongdien2000/HUMEA.git
+cd HUMEA
+```
+
+Kaggle users should then follow [the notebook setup guide](kaggle/README.md). The entry point is [kaggle/humea_kaggle.ipynb](kaggle/humea_kaggle.ipynb); it invokes `kaggle_runner.py`, which launches `train.py` for the selected configuration.
 
 ## Environment and hardware
 
 Use Kaggle with a CUDA-enabled NVIDIA Tesla T4 GPU (16 GB). Run each configuration separately with `MODE = "single"` to stay within Kaggle's session limits. The runner supports two GPUs for independent experiment queues, but a combined six-experiment job can exceed the session limit.
 
-- Python: 3.12 in the tested Kaggle environment.
-- PyTorch: CUDA-enabled, version 2.7 or later. Preserve Kaggle's preinstalled PyTorch and scientific stack.
-- Notebook additions are pinned in `requirements-kaggle.txt`: Loguru, gdown and W&B.
+- Recorded Kaggle environment: Linux x86_64, Python 3.12.13, PyTorch 2.10.0+cu128 and CUDA 12.8.
+- Recorded scientific packages: NumPy 2.0.2, SciPy 1.16.3 and scikit-learn 1.6.1. Preserve Kaggle's preinstalled CUDA-enabled PyTorch and scientific stack; if its image changes, compare it with the saved environment before treating the rerun as the same environment.
+- Notebook additions are pinned in `requirements-kaggle.txt`: Loguru 0.7.3, gdown 5.2.0 and W&B 0.30.0.
 - Each tracked execution saves exact package versions, Python, PyTorch, CUDA and GPU information in `runtime-environment.json`. Use the record attached to the corresponding W&B run when reproducing a reported experiment.
 - Local CPU tests check code behavior; CPU execution is not the recommended reproduction hardware.
 
@@ -26,6 +35,8 @@ A compatible NVIDIA driver is required. This locked local environment is distinc
 ## Source revision
 
 Use the source revision referenced in the report or W&B run. Each tracked run saves `source.zip` and its SHA256 fingerprint, including when its execution directory has no Git metadata. Cite the group's GitHub repository and exact source revision in the report.
+
+The source archive attached to the group's main runs has SHA256 `545b95884f15dfc94ceae0d985cbe0968da5cc733f718ab611be9688e2e51b34`. Use that attached archive for the exact recorded source; a new Git archive includes updated documentation and will have a different archive hash.
 
 To package source for Kaggle, commit the intended changes and run:
 
@@ -87,7 +98,9 @@ python kaggle_runner.py --wandb-mode online --wandb-entity YOUR_ACCOUNT_OR_TEAM 
 | `yago15k-50` | FB15K_YAGO15K | 0.5 | 0 |
 | `yago15k-80` | FB15K_YAGO15K | 0.8 | 0 |
 
-The full commands use seed 42, batch 512, learning rate 0.0005, 1,000 epochs and evaluation every 10 epochs. Change the selected experiment ID to run another configuration. To schedule all six:
+The full commands use seed 42, batch 512, learning rate 0.0005, 1,000 epochs and evaluation every 10 epochs. Change the selected experiment ID to run another configuration. Keep these settings when reproducing the reported main experiments. Run each ID in its own Kaggle session; `smoke` runs only 12 epochs and is a setup check.
+
+On a machine with enough uninterrupted GPU time, all six can also be scheduled with:
 
 ```bash
 python kaggle_runner.py --wandb-mode online --wandb-entity YOUR_ACCOUNT_OR_TEAM all
@@ -98,10 +111,10 @@ With two visible GPUs the datasets have separate queues; with one GPU experiment
 For a component-removal experiment, run `train.py` with full baseline arguments and the selected `--without` flag:
 
 ```bash
-python train.py --file_dir data/mmkb-datasets/FB15K_DB15K --rate 0.2 --seed 42 --lr 0.0005 --epochs 1000 --hidden_units 300,300,300 --check_point 10 --bsize 512 --il_start 500 --csls --csls_k 3 --tau_cl 0.1 --tau_al 4.0 --fusion_weight_dim 512 --without 1
+python train.py --file_dir data/mmkb-datasets/FB15K_DB15K --rate 0.2 --seed 42 --lr 0.0005 --epochs 1000 --hidden_units 300,300,300 --check_point 10 --bsize 512 --il_start 500 --csls --csls_k 3 --tau_cl 0.1 --tau_al 4.0 --fusion_weight_dim 512 --al_loss 0.1 --cl_loss 1.0 --without 1
 ```
 
-For direct execution, configure `WANDB_MODE`, `WANDB_ENTITY` and `WANDB_PROJECT` in the environment. Flag mapping: 1 image, 2 graph, 3 relation, 4 relation text, 5 attribute, 6 attribute text, 7 inner-view alignment, 8 cross-view alignment. Report only experiments actually executed. A complete GPU ablation campaign has not yet been validated.
+For direct execution, configure `WANDB_MODE`, `WANDB_ENTITY` and `WANDB_PROJECT` in the environment. CLI flag mapping: 1 image, 2 graph, 3 relation, 4 relation text, 5 attribute, 6 attribute text, 7 inner-view alignment, 8 cross-view alignment. This is an execution example; consult the report for which ablation configurations were actually performed.
 
 ## Outputs and interruption handling
 

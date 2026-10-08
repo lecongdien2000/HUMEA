@@ -4,7 +4,7 @@ Start with the [root reproduction guide](../README.md) for environment, commands
 
 ## Prepare source and data
 
-1. Commit the source revision used for the experiment and create `HUMEA-kaggle-bundle.zip` using `git archive` as described in the root guide.
+1. Clone the public fork using the root guide. Select the source revision associated with the reported experiment and create `HUMEA-kaggle-bundle.zip` using `git archive`. For the exact recorded archive, download the run's `source.zip`, verify its SHA256 against the root guide, and rename it `HUMEA-kaggle-bundle.zip`.
 2. Upload the bundle to a Kaggle Dataset and attach it to the notebook.
 3. Attach the authors' processed `data.zip`, or an extracted Dataset whose root contains `mmkb-datasets/`. The notebook can download the original archive with Internet and `DOWNLOAD_DATA_IF_MISSING` enabled.
 4. Import [humea_kaggle.ipynb](humea_kaggle.ipynb).
@@ -29,7 +29,15 @@ For online recording, add `WANDB_API_KEY` in Kaggle Secrets and grant the notebo
 
 The group's destination is the public [diencongle/humea-reproduction](https://forge.coreweave.com/wandb/diencongle/humea-reproduction) project. Verify each experiment or report link in a signed-out browser before including it in the report.
 
-Run `validate`, then `smoke`, then `single`. `all` launches the six configurations in the root guide. Each run logs scalar losses per epoch and evaluation history every 10 epochs, with source/environment evidence.
+Run the notebook as follows:
+
+1. Set `MODE = "validate"` and run all cells. Check that source, data and GPU validation succeed.
+2. Set `MODE = "smoke"` and run all cells. This performs a 12-epoch setup check; verify that W&B recording succeeds.
+3. Set `MODE = "single"` and choose an `EXPERIMENT` from the root guide. Keep `BATCH_SIZE = 512` and online W&B recording enabled.
+4. Save a notebook version with **Save & Run All** for the full 1,000-epoch execution. This runs all cells in a fresh session, as described in [Kaggle's notebook documentation](https://www.kaggle.com/docs/notebooks). Confirm completion in the saved version's logs and download its output archive.
+5. Repeat step 3–4 for each remaining experiment ID, using a separate saved execution for each configuration.
+
+Each run logs scalar losses per epoch and evaluation history every 10 epochs, with source/environment evidence. Avoid `MODE = "all"` on Kaggle: the combined queue can exceed a session's time limit.
 
 ## Save and share evidence
 
