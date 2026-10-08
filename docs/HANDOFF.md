@@ -1,6 +1,14 @@
 # HUMEA current work
 
-Updated 2026-10-02 (Asia/Bangkok). Read this instead of old chat history.
+Latest update 2026-10-08 (Asia/Bangkok). Read this instead of old chat history.
+
+## Current destination (supersedes older setup notes below)
+
+- User authorized a public fork. Canonical reproduction source: https://github.com/lecongdien2000/HUMEA, a GitHub fork of https://github.com/mikumifa/HUMEA with the authors' history and our reproduction commits retained. Local remote `public-fork` targets it; `origin` remains upstream and `reproduction` retains the original private repository as a backup.
+- Use the public fork URL in the academic report. The README contains execution instructions and attribution, with experimental scores kept in the report.
+- All six main configurations completed; ablations remain separate work. Evidence is in `D:/Github/HUMEA-kaggle-yago80-result-review/` and the corresponding earlier result-review folders.
+- W&B project is now public. Updated main report: https://forge.coreweave.com/wandb/diencongle/humea-reproduction/reports/HUMEA-Reproduction-Main-Experiments-6-of-6-Complete---VmlldzoxODA0OTM3MQ. Historical private-GitHub references in that report should be replaced with the public fork URL when next editing it.
+- Run Kaggle configurations separately rather than queueing all six in a single limited session. No training source was changed by the fork setup.
 
 ## Lecturer requirements update
 

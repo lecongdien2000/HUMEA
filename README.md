@@ -1,10 +1,10 @@
 # HUMEA experiment reproduction
 
-Code and execution instructions for the group's [HUMEA reproduction repository](https://github.com/lecongdien2000/HUMEA-reproduction), based on [upstream HUMEA](https://github.com/mikumifa/HUMEA). Method explanations, results and comparisons belong in the accompanying report.
+Code and execution instructions for the group's public [HUMEA reproduction fork](https://github.com/lecongdien2000/HUMEA), forked from the authors' [upstream HUMEA](https://github.com/mikumifa/HUMEA). This fork preserves the authors' Git history and adds Kaggle execution, GPU memory adjustments, W&B tracking and reproduction instructions. Method explanations, results and comparisons belong in the accompanying report.
 
 ## Environment and hardware
 
-Use Kaggle with a CUDA-enabled NVIDIA Tesla T4 GPU (16 GB). The first configuration passed a 12-epoch execution check on one T4. The runner supports two GPUs for independent experiment queues; the complete six-experiment schedule has not yet been validated.
+Use Kaggle with a CUDA-enabled NVIDIA Tesla T4 GPU (16 GB). Run each configuration separately with `MODE = "single"` to stay within Kaggle's session limits. The runner supports two GPUs for independent experiment queues, but a combined six-experiment job can exceed the session limit.
 
 - Python: 3.12 in the tested Kaggle environment.
 - PyTorch: CUDA-enabled, version 2.7 or later. Preserve Kaggle's preinstalled PyTorch and scientific stack.
@@ -144,4 +144,4 @@ python kaggle_runner.py --help
 
 ## Attribution
 
-Based on HUMEA, *On Modality Weighting and Specificity for Multi-Modal Entity Alignment*. Preserve upstream attribution when publishing this repository. Consult the authors' distribution terms before redistributing datasets or pretrained features.
+Original code: [mikumifa/HUMEA](https://github.com/mikumifa/HUMEA), accompanying *On Modality Weighting and Specificity for Multi-Modal Entity Alignment*. The original authors' commits are retained in this fork; subsequent reproduction commits record the group's additions. Consult the authors' distribution terms before redistributing datasets or pretrained features.
