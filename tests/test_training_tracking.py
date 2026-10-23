@@ -75,3 +75,20 @@ def test_training_logs_scalar_losses_each_epoch_without_changing_updates():
     assert [epoch for epoch, metrics in tracker.events] == [0, 1]
     assert all({"total", "mi", "inner", "alignment", "joint", "estimator"}
                <= metrics.keys() for epoch, metrics in tracker.events)
+
+
+
+def test_loss_ablations_skip_only_the_selected_objective():
+    for without, removed, retained in [(7, "inner", "alignment"), (8, "alignment", "inner")]:
+        tracker = RecordingTracker()
+        model = make_training(tracker)
+        model.args.without = without
+        def forbidden(*args):
+            raise AssertionError("Removed loss must not execute")
+        setattr(model, "inner_view_loss" if without == 7 else "kl_alignment_loss", forbidden)
+        before = model.multimodal_encoder.weight.detach().clone()
+        model.train()
+        assert len(tracker.events) == 2
+        assert all(metrics[removed] == 0.0 and metrics[retained] > 0.0
+                   and metrics["joint"] > 0.0 for _, metrics in tracker.events)
+        assert not torch.equal(before, model.multimodal_encoder.weight.detach())

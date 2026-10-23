@@ -189,9 +189,12 @@ def build_train_command(
     epochs: int = 1000,
     checkpoint: int = 10,
     batch_size: int = 512,
+    without: int = 0,
 ) -> list[str]:
     """Build the direct ``train.py`` command used for one paper experiment."""
 
+    if without not in (0, 7, 8):
+        raise ValueError("Supported loss ablations: without 0, 7, 8")
     del repo_root  # The subprocess cwd selects the repository; paths stay portable.
     return [
         sys.executable,
@@ -224,7 +227,7 @@ def build_train_command(
         "--fusion_weight_dim",
         str(experiment.fusion_weight_dim),
         "--without",
-        "0",
+        str(without),
         "--al_loss",
         "0.1",
         "--cl_loss",
@@ -245,6 +248,7 @@ def run_experiment(
     epochs: int = 1000,
     checkpoint: int = 10,
     batch_size: int = 512,
+    without: int = 0,
     wandb_mode: str = "offline",
     wandb_project: str = "humea-reproduction",
     wandb_entity: str | None = None,
@@ -252,6 +256,8 @@ def run_experiment(
     """Run one experiment, stream its log, and record an atomic result."""
 
     record_id = run_id or experiment.id
+    if without:
+        record_id += f"-without{without}"
     manifest_path = artifacts_dir / "manifest.json"
     with manifest_lock:
         if should_skip(manifest, record_id, force=force, wandb_mode=wandb_mode,
@@ -269,6 +275,7 @@ def run_experiment(
         epochs=epochs,
         checkpoint=checkpoint,
         batch_size=batch_size,
+        without=without,
     )
     if gpu_id == "cpu":
         command.extend(["--device", "cpu"])
@@ -281,7 +288,8 @@ def run_experiment(
         environment["WANDB_ENTITY"] = wandb_entity
     environment["HUMEA_TRACKING_DIR"] = str(tracking_dir.resolve())
     environment["HUMEA_EXPERIMENT_ID"] = experiment.id
-    environment["HUMEA_JOB_TYPE"] = "smoke" if record_id.startswith("smoke-") else "main"
+    environment["HUMEA_JOB_TYPE"] = ("smoke" if record_id.startswith("smoke-")
+                                     else "ablation" if without else "main")
     environment["WANDB_NAME"] = f"{record_id}-seed42"
     environment["PYTHONUNBUFFERED"] = "1"
     if gpu_id != "cpu":
@@ -297,6 +305,7 @@ def run_experiment(
         "command": command,
         "started_at": started_at.isoformat(),
         "batch_size": batch_size,
+        "without": without,
         "metrics": None,
     }
     with manifest_lock:
@@ -438,7 +447,7 @@ def write_summary_csv(path: Path, manifest: dict) -> None:
                     "hits10": metrics.get("hits10", ""),
                     "mrr": metrics.get("mrr", ""),
                     "duration_seconds": record.get("duration_seconds", ""),
-                    "comparison": _comparison(experiment, metrics),
+                    "comparison": "" if record.get("without", 0) else _comparison(experiment, metrics),
                     "wandb_url": record.get("wandb_url", ""),
                 }
             )
@@ -455,6 +464,7 @@ def execute_queues(
     epochs: int = 1000,
     checkpoint: int = 10,
     batch_size: int = 512,
+    without: int = 0,
     wandb_mode: str = "offline",
     wandb_project: str = "humea-reproduction",
     wandb_entity: str | None = None,
@@ -477,6 +487,7 @@ def execute_queues(
                 epochs=epochs,
                 checkpoint=checkpoint,
                 batch_size=batch_size,
+                without=without,
                 wandb_mode=wandb_mode,
                 wandb_project=wandb_project,
                 wandb_entity=wandb_entity,
@@ -561,6 +572,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=512,
         help="Training batch size (paper and default: 512)",
     )
+    parser.add_argument("--without", type=int, choices=[0, 7, 8], default=0,
+                        help="0 baseline; 7 remove unimodal alignment; 8 remove distillation")
     parser.add_argument("--wandb-mode", choices=["online", "offline", "disabled"],
                         default=os.environ.get("WANDB_MODE", "offline"))
     parser.add_argument("--wandb-project",
@@ -656,6 +669,7 @@ def main(argv: list[str] | None = None) -> int:
         epochs=12 if args.command == "smoke" else 1000,
         checkpoint=10,
         batch_size=args.batch_size,
+        without=args.without,
         wandb_mode=args.wandb_mode,
         wandb_project=args.wandb_project,
         wandb_entity=args.wandb_entity,

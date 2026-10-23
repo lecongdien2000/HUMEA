@@ -529,3 +529,42 @@ def test_cli_rejects_unwritable_artifact_target(tmp_path, monkeypatch, capsys):
 
     assert exit_code == 2
     assert "Artifact directory is not writable" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("without", [7, 8])
+def test_loss_ablation_changes_only_without_argument(tmp_path, without):
+    baseline = build_train_command(tmp_path, EXPERIMENTS["db15k-20"])
+    ablation = build_train_command(tmp_path, EXPERIMENTS["db15k-20"], without=without)
+    index = baseline.index("--without") + 1
+    assert ablation[index] == str(without)
+    ablation[index] = "0"
+    assert ablation == baseline
+
+
+def test_ablation_does_not_reuse_baseline_and_records_own_evidence(tmp_path, monkeypatch):
+    captured = {}
+    def fake_popen(command, **kwargs):
+        captured.update(command=command, env=kwargs["env"])
+        (Path(kwargs["env"]["HUMEA_TRACKING_DIR"]) / "tracking.json").write_text(
+            json.dumps({"mode": "offline", "status": "completed"}))
+        return FakeProcess(["Best avg epoch <10>: acc@[1, 5, 10]=[0.1 0.2 0.3], mr=50, mrr=0.15\n"])
+    monkeypatch.setattr(kaggle_runner.subprocess, "Popen", fake_popen)
+    manifest = {"version": 1, "experiments": {"db15k-20": {
+        "status": "success", "metrics": {"mrr": 0.5, "hits1": 0.4, "hits5": 0.6, "hits10": 0.7},
+        "tracking": {"mode": "offline", "status": "completed"}}}}
+    assert run_experiment(repo_root=tmp_path, artifacts_dir=tmp_path / "artifacts",
+        experiment=EXPERIMENTS["db15k-20"], gpu_id="cpu", manifest=manifest,
+        manifest_lock=threading.Lock(), without=7)
+    assert manifest["experiments"]["db15k-20-without7"]["without"] == 7
+    assert captured["env"]["HUMEA_JOB_TYPE"] == "ablation"
+    assert "without7" in captured["env"]["WANDB_NAME"]
+    assert captured["command"][captured["command"].index("--without") + 1] == "7"
+    write_summary_csv(tmp_path / "summary.csv", manifest)
+    with (tmp_path / "summary.csv").open() as stream:
+        rows = list(csv.DictReader(stream))
+    assert rows[-1]["comparison"] == ""
+
+
+def test_parser_accepts_loss_ablation():
+    args = kaggle_runner.build_parser().parse_args(["--without", "8", "single", "--experiment", "db15k-20"])
+    assert args.without == 8
