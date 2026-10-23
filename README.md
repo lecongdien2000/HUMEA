@@ -81,6 +81,33 @@ Before submission, make the project publicly viewable or create a view-only repo
 
 ## Execution
 
+For a strict repeatability check, use [kaggle/humea_strict_replay.ipynb](kaggle/humea_strict_replay.ipynb),
+or run the following after preparing the same data and W&B credentials:
+
+```bash
+python replay_runner.py --epochs 35 --wandb-mode online --wandb-entity YOUR_ACCOUNT_OR_TEAM
+```
+
+This launches two separate DB15K-20 baseline processes on GPU 0 with seed 42,
+strict deterministic algorithms, and unchanged loss/fusion settings. Use a fresh
+`--artifacts-dir` for each pair. Unsupported deterministic operations fail explicitly.
+The exit code is zero only if inputs, source, settings, initial state and every
+epoch's model/optimizer/RNG/order hashes, routing, losses and recorded evaluations match.
+It does not start a full experiment automatically.
+
+The `artifacts/strict-replay` directory contains the comparison, raw logs and each
+run's `replay` directory. Input checksums and routing/state traces are attached to
+W&B; large diagnostic checkpoints stay in the Kaggle output archive. Checkpoints
+include initialization and epochs 20, 22, 23 and 24. Download that archive before
+discarding the Kaggle session.
+
+For a direct diagnostic run, append `--strict_reproducibility --replay_diagnostics`
+to the corresponding `train.py` command. Set `CUBLAS_WORKSPACE_CONFIG=:4096:8` and
+`PYTHONHASHSEED=42` before starting Python. To resume, use the same command/settings,
+add `--resume_diagnostic PATH_TO_CHECKPOINT`, and use a fresh tracking output directory.
+Resume only checkpoints from your own trusted runs; these include Python state.
+Repeatability must be rechecked when the hardware or software environment changes.
+
 Run from the repository root. On Kaggle use `python`; in a local locked environment prefix commands with `uv run`.
 
 ```bash

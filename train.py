@@ -13,6 +13,7 @@ from loguru import logger
 
 from layers import MultiLossLayer
 from experiment_tracking import ExperimentTracker
+from reproducibility import configure_determinism, ReplayDiagnostics, restore_checkpoint
 from loss import ial_loss, icl_loss
 from memory_utils import (
     backward_through_gradient_bridge,
@@ -86,13 +87,25 @@ class HUMEA:
         self.parser = argparse.ArgumentParser()
         self.args = args if args is not None else self.parse_options(self.parser)
         self.tracker = tracker
+        configure_determinism(getattr(self.args, 'strict_reproducibility', False))
         self.set_seed(self.args.seed, True)
         self.device = torch.device(self.args.device)
         self.init_data()
         self.init_model()
+        self.diagnostics = None
+        if getattr(self.args, 'replay_diagnostics', False):
+            if tracker is None:
+                raise ValueError('Replay diagnostics require an ExperimentTracker output directory')
+            self.diagnostics = ReplayDiagnostics(tracker.output_dir / 'replay', self)
 
     @staticmethod
     def parse_options(parser):
+        parser.add_argument('--strict_reproducibility', action='store_true',
+                            help='Fail on nondeterministic operations; configure before CUDA initialization')
+        parser.add_argument('--replay_diagnostics', action='store_true',
+                            help='Record input/state hashes, actual fusion routing and diagnostic checkpoints')
+        parser.add_argument('--resume_diagnostic', type=Path,
+                            help='Resume a trusted local diagnostic checkpoint; requires replay diagnostics')
         parser.add_argument(
             "--file_dir",
             type=str,
@@ -405,13 +418,27 @@ class HUMEA:
         return total_loss
 
     def train(self):
+        global best_mrr, best_result
         logger.info(f"{self.args}")
         t_total = time.time()
         bsize = self.args.bsize
         device = self.device
 
         self.input_idx = torch.LongTensor(np.arange(self.ENT_NUM)).to(device)
-        for epoch in range(0, self.args.epochs):
+        diagnostics = getattr(self, 'diagnostics', None)
+        start_epoch = 0
+        if getattr(self.args, 'resume_diagnostic', None):
+            if diagnostics is None:
+                raise ValueError('--resume_diagnostic requires --replay_diagnostics')
+            start_epoch, evaluation = restore_checkpoint(self.args.resume_diagnostic, self)
+            if evaluation:
+                best_mrr, best_result = evaluation['best_mrr'], evaluation['best_result']
+                if self.tracker is not None:
+                    self.tracker._best_mrr = best_mrr
+        if diagnostics:
+            diagnostics.record(start_epoch - 1, self,
+                               evaluation={'best_mrr': best_mrr, 'best_result': best_result})
+        for epoch in range(start_epoch, self.args.epochs):
             epoch_started = time.monotonic()
             if device.type == "cuda":
                 torch.cuda.reset_peak_memory_stats(device)
@@ -443,6 +470,7 @@ class HUMEA:
                 self.rel_txt_features,
                 exp_outputs=True,
             )
+            routing = {'encoder': diagnostics.routing(self)} if diagnostics else None
             encoder_outputs = [
                 gph_emb,
                 img_emb,
@@ -582,6 +610,8 @@ class HUMEA:
                     exp_outputs=True,
                 )
             estimator_loss = self.mi_estimator.train_estimator(embeddings)
+            if diagnostics:
+                routing['estimator'] = diagnostics.routing(self)
             estimator_loss.backward()
             self.mi_optimizer.step()
             epoch_losses["estimator"] = float(estimator_loss.detach())
@@ -598,9 +628,17 @@ class HUMEA:
             del embeddings, estimator_loss, _
             torch.cuda.empty_cache()
 
+            current_evaluation = None
             if epoch != 0 and epoch % self.args.check_point == 0:
                 print("\n[epoch {:d}] checkpoint!".format(epoch))
                 self.test(epoch)
+                if diagnostics:
+                    current_evaluation = self.latest_evaluation
+                    routing['evaluation'] = diagnostics.routing(self)
+            if diagnostics:
+                diagnostics.record(epoch, self, routing=routing, losses=epoch_losses,
+                                   evaluation={'best_mrr': best_mrr, 'best_result': best_result,
+                                               'current': current_evaluation})
 
         print("[optimization finished!]")
         print("[total time elapsed: {:.4f} s]".format(time.time() - t_total))
@@ -642,6 +680,10 @@ class HUMEA:
             }
             for name, emb in results.items():
                 acc, mr, mrr = self.evaluate_embedding(emb, f"epoch {epoch} - {name}")
+                self.latest_evaluation = {
+                    'epoch': epoch, 'hits1': float(acc[0]), 'hits5': float(acc[1]),
+                    'hits10': float(acc[2]), 'mr': float(mr), 'mrr': float(mrr),
+                }
                 if self.tracker is not None:
                     self.tracker.log_evaluation(epoch, {
                         "hits1": float(acc[0]), "hits5": float(acc[1]),
@@ -709,11 +751,13 @@ class HUMEA:
 
 if __name__ == "__main__":
     args = HUMEA.parse_options(argparse.ArgumentParser())
+    # Tracker environment discovery can initialize CUDA, so configure first.
+    configure_determinism(args.strict_reproducibility)
     repo_root = Path(__file__).resolve().parent
     job_type = "ablation" if args.without else os.environ.get("HUMEA_JOB_TYPE", "main")
     name = os.environ.get("WANDB_NAME", f"{Path(args.file_dir).name}-{args.rate}-seed{args.seed}-without{args.without}")
     tracker = ExperimentTracker.start(
-        config={**vars(args), "dataset": Path(args.file_dir).name,
+        config={**{k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()}, "dataset": Path(args.file_dir).name,
                 "experiment_id": os.environ.get("HUMEA_EXPERIMENT_ID", name)},
         repo_root=repo_root,
         output_dir=Path(os.environ.get("HUMEA_TRACKING_DIR", repo_root / "artifacts" / "tracking" / datetime.now().strftime("%Y%m%d-%H%M%S-%f"))),
@@ -740,6 +784,11 @@ if __name__ == "__main__":
             logger.complete()
             if model is not None:
                 tracker.attach_file(model.training_log_path)
+                if model.diagnostics:
+                    # Keep large restorable checkpoints in Kaggle output; share
+                    # diagnostic hashes and routing records with the W&B run.
+                    for path in sorted(model.diagnostics.output_dir.glob('*.json*')):
+                        tracker.attach_file(path)
         except Exception:
             tracker.finish(exit_code=1)
             raise

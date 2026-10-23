@@ -190,13 +190,15 @@ def build_train_command(
     checkpoint: int = 10,
     batch_size: int = 512,
     without: int = 0,
+    strict_reproducibility: bool = False,
+    replay_diagnostics: bool = False,
 ) -> list[str]:
     """Build the direct ``train.py`` command used for one paper experiment."""
 
     if without not in (0, 7, 8):
         raise ValueError("Supported loss ablations: without 0, 7, 8")
     del repo_root  # The subprocess cwd selects the repository; paths stay portable.
-    return [
+    command = [
         sys.executable,
         "train.py",
         "--file_dir",
@@ -233,6 +235,11 @@ def build_train_command(
         "--cl_loss",
         "1.0",
     ]
+    if strict_reproducibility:
+        command.append('--strict_reproducibility')
+    if replay_diagnostics:
+        command.append('--replay_diagnostics')
+    return command
 
 
 def run_experiment(
@@ -252,6 +259,8 @@ def run_experiment(
     wandb_mode: str = "offline",
     wandb_project: str = "humea-reproduction",
     wandb_entity: str | None = None,
+    strict_reproducibility: bool = False,
+    replay_diagnostics: bool = False,
 ) -> bool:
     """Run one experiment, stream its log, and record an atomic result."""
 
@@ -276,6 +285,8 @@ def run_experiment(
         checkpoint=checkpoint,
         batch_size=batch_size,
         without=without,
+        strict_reproducibility=strict_reproducibility,
+        replay_diagnostics=replay_diagnostics,
     )
     if gpu_id == "cpu":
         command.extend(["--device", "cpu"])
@@ -292,6 +303,10 @@ def run_experiment(
                                      else "ablation" if without else "main")
     environment["WANDB_NAME"] = f"{record_id}-seed42"
     environment["PYTHONUNBUFFERED"] = "1"
+    if strict_reproducibility:
+        environment['PYTHONHASHSEED'] = '42'
+        environment['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
+        environment['HUMEA_JOB_TYPE'] = 'diagnostic'
     if gpu_id != "cpu":
         environment["CUDA_VISIBLE_DEVICES"] = gpu_id
         environment["PYTORCH_ALLOC_CONF"] = "backend:cudaMallocAsync"
@@ -306,6 +321,9 @@ def run_experiment(
         "started_at": started_at.isoformat(),
         "batch_size": batch_size,
         "without": without,
+        "strict_reproducibility": strict_reproducibility,
+        "replay_diagnostics": replay_diagnostics,
+        "tracking_dir": str(tracking_dir.resolve()),
         "metrics": None,
     }
     with manifest_lock:

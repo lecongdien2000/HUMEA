@@ -230,10 +230,21 @@ class PowerSetFusionWithMoEGating(nn.Module):
     def forward(self, inputs):
         assert len(inputs) == self.num_modalities
         if self.use_proj:
-            weight_norm = F.softmax(self.combo_proj(self.combo_gate_query), dim=0)
+            logits = self.combo_proj(self.combo_gate_query)
         else:
-            weight_norm = F.softmax(self.weight, dim=0)
+            logits = self.weight
+        weight_norm = F.softmax(logits, dim=0)
         _, topk_indices = torch.topk(weight_norm.squeeze(), self.topk)
+        if getattr(self, 'record_routing', False):
+            probabilities = weight_norm.detach().reshape(-1)
+            ranked = probabilities.sort(descending=True).values
+            self.routing_snapshot = {
+                'logits': logits.detach().reshape(-1).cpu().tolist(),
+                'probabilities': probabilities.cpu().tolist(),
+                'selected': topk_indices.detach().cpu().tolist(),
+                'cutoff_margin': float((ranked[self.topk - 1] - ranked[self.topk]).cpu())
+                if self.topk < probabilities.numel() else None,
+            }
         mask = torch.zeros_like(weight_norm)
         mask[topk_indices] = 1.0
         masked_weight = weight_norm * mask
