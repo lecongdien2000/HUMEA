@@ -11,6 +11,23 @@ cd HUMEA
 
 Kaggle users should then follow [the notebook setup guide](kaggle/README.md). The entry point is [kaggle/humea_kaggle.ipynb](kaggle/humea_kaggle.ipynb); it invokes `kaggle_runner.py`, which launches `train.py` for the selected configuration.
 
+For the baseline and loss ablations using the exact source attached to the recorded
+main reproduction, use [kaggle/humea_reference_ablations.ipynb](kaggle/humea_reference_ablations.ipynb).
+This is the ablation entry point; `humea_strict_replay.ipynb` is a separate diagnostic.
+The reference notebook restores [reproduction/reference-source.zip](reproduction/reference-source.zip),
+verifies its SHA256 and uses a separate orchestration directory so historical training
+files remain unchanged. File checksums and recorded settings are in
+[reproduction/reference-source.json](reproduction/reference-source.json).
+
+Choose `MODE = "smoke"` for three 12-epoch checks, or `MODE = "campaign"` for those
+checks followed by fresh 1,000-epoch baseline, `without7`, and `without8` runs.
+Keep GPU T4, Internet and the `WANDB_API_KEY` secret enabled. The notebook uses seed 42,
+batch size 512, alignment rate 0.2 and fusion dimension 512, with online W&B logging.
+Run it in a fresh Kaggle session; it refuses to overwrite an existing source directory.
+It stops on a failed job, changed tracked source fingerprint, or the 5.5-hour training
+budget, and preserves evidence in `/kaggle/working/HUMEA-results.zip`.
+This restores historical code/settings; it does not enforce deterministic GPU execution.
+
 ## Environment and hardware
 
 Use Kaggle with a CUDA-enabled NVIDIA Tesla T4 GPU (16 GB). Run each configuration separately with `MODE = "single"` to stay within Kaggle's session limits. The runner supports two GPUs for independent experiment queues, but a combined six-experiment job can exceed the session limit.
